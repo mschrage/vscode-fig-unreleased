@@ -51,6 +51,19 @@
                             ]
                         }
                     }
+                },
+                "figUnreleased.validate": {
+                    "type": "boolean",
+                    "description": "Enable or disable all validation (linting).",
+                    "default": true
+                },
+                "figUnreleased.lint.commandName": {
+                    "type": "boolean",
+                    "default": true
+                },
+                "figUnreleased.updatePathsOnRename": {
+                    "type": "boolean",
+                    "description": "Auto update file paths in shell files / package.json scripts on file rename"
                 }
             }
         }

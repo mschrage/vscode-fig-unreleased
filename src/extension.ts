@@ -430,6 +430,8 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 // #endregion
 
 // #region Simple utils
+const getExtensionSetting = <T = any>(key: string) => workspace.getConfiguration('figUnreleased').get<T>(key)
+
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
     // todo (easy) parse cd commands
     const allowSchemes = ['file', 'vscode-vfs']
@@ -1277,13 +1279,27 @@ const registerLinter = () => {
     const diagnosticCollection = languages.createDiagnosticCollection('uniqueUnreleasedFig')
     let supportedDocuments = []
     const doLinting = (document: TextDocument) => {
+        if (!getExtensionSetting('validate')) {
+            diagnosticCollection.set(document.uri, [])
+            return
+        }
+        const lintTypeToOptionMap: Partial<Record<LintProblemType, string>> = {
+            commandName: 'commandName',
+        }
         // use delta edit optimizations?
         const ranges = getAllCommandsLocations(document)
         const allLintProblems: ParseCollectedData['lintProblems'] = []
         for (const range of ranges) {
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, range, range.start, collectedData, 'lint')
-            allLintProblems.push(...(collectedData.lintProblems ?? []))
+            const { lintProblems } = collectedData
+            allLintProblems.push(
+                ...(lintProblems.filter(({ type }) => {
+                    const controlledSetting = lintTypeToOptionMap[type]
+                    if (!controlledSetting) return true
+                    return getExtensionSetting(`lint.${controlledSetting}`)
+                }) ?? []),
+            )
         }
         diagnosticCollection.set(
             document.uri,
@@ -1295,7 +1311,7 @@ const registerLinter = () => {
             })),
         )
     }
-    const updateEditors = () => {
+    const lintEditors = () => {
         // todo use tabs instead
         supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isSupportedDocument(document))
         for (const document of supportedDocuments) {
@@ -1307,8 +1323,11 @@ const registerLinter = () => {
         if (!supportedDocuments.includes(document)) return
         doLinting(document)
     })
-    updateEditors()
-    window.onDidChangeVisibleTextEditors(updateEditors)
+    lintEditors()
+    window.onDidChangeVisibleTextEditors(lintEditors)
+    workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
+        if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintEditors()
+    })
 }
 
 // Unimplemented commands

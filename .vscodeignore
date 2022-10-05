@@ -1,4 +1,7 @@
 **/**
 */*
 !package.json
+# TODO add when repository field is added
+# !README.MD
+!LICENSE
 !out/index.js

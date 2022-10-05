@@ -12,6 +12,7 @@ out
 coverage
 *.lcov
 .nyc_output
+*.vsix
 
 logs
 *.log

@@ -1,0 +1,105 @@
+{
+    "name": "fig-unreleased",
+    "displayName": "Fig Unreleased",
+    "publisher": null,
+    "description": "Full-featured Fig-powered intellisense with focus for package.json & shell files support",
+    "version": "0.0.0-dev",
+    "license": "MIT",
+    "main": "./out/index.js",
+    "browser": "./out/index.js",
+    "categories": [
+        "Programming Languages",
+        "Linters",
+        "Snippets",
+        "Other"
+    ],
+    "keywords": [
+        "bat",
+        "shellscript",
+        ".bat",
+        ".cmd",
+        ".sh",
+        "package.json",
+        "scripts",
+        "command",
+        "highlight",
+        "highlighting",
+        "completions"
+    ],
+    "contributes": {
+        "configuration": {
+            "properties": {
+                "figUnreleased.mixins": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "insertValue": {
+                                    "type": "string"
+                                },
+                                "description": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "name"
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "activationEvents": [
+        "onLanguage:bat",
+        "onLanguage:shellscript",
+        "onLanguage:json",
+        "onLanguage:jsonc"
+    ],
+    "scripts": {
+        "start": "node build.mjs --watch",
+        "build": "node build.mjs",
+        "test": "vitest src/tests.spec.ts --globals"
+    },
+    "dependencies": {
+        "@types/lodash": "^4.14.186",
+        "@types/vscode": "^1.71.0",
+        "@withfig/autocomplete": "^2.422.0",
+        "@withfig/autocomplete-types": "^1.23.0",
+        "@zardoy/tsconfig": "^1.5.0",
+        "@zardoy/utils": "^0.0.9",
+        "@zardoy/vscode-utils": "^0.0.38",
+        "esbuild": "^0.15.10",
+        "find-up": "^5",
+        "fs-extra": "^10.1.0",
+        "jsonc-parser": "^3.2.0",
+        "lodash": "^4.17.21",
+        "path-browserify": "^1.0.1",
+        "picomatch": "github:silverwind/picomatch#nodeps",
+        "typescript": "^4.8.4",
+        "vitest": "^0.23.4"
+    },
+    "engines": {
+        "vscode": "^1.71.0"
+    },
+    "capabilities": {
+        "untrustedWorkspaces": {
+            "supported": "limited",
+            "description": "Suggestions that use script execution requires workspace trust"
+        }
+    },
+    "prettier": {
+        "semi": false,
+        "singleQuote": true,
+        "proseWrap": "never",
+        "tabWidth": 4,
+        "trailingComma": "all",
+        "arrowParens": "avoid",
+        "printWidth": 160
+    }
+}

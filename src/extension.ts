@@ -1,5 +1,5 @@
 /// <reference types="@withfig/autocomplete-types/index" />
-import _ALL_FIG_SPECS from 'FIG_ALL_SPECS'
+import _FIG_ALL_SPECS from 'FIG_ALL_SPECS'
 import picomatch from 'picomatch/posix'
 import {
     commands,
@@ -43,7 +43,7 @@ const getFigSubcommand = (__spec: Fig.Spec) => {
     return spec
 }
 
-const ALL_LOADED_SPECS = _ALL_FIG_SPECS.map(mod => mod.default).map(value => getFigSubcommand(value)!)
+const ALL_LOADED_SPECS = _FIG_ALL_SPECS.map(mod => mod.default).map(value => getFigSubcommand(value)!)
 
 let isScriptExecutionAllowed = false
 

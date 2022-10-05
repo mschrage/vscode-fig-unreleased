@@ -55,7 +55,7 @@ export const activate = ({}: ExtensionContext) => {
 
     registerCommands()
     registerLanguageProviders()
-    registerUpdatePathsOnRename()
+    registerUpdateOnFileRename()
     registerLinter()
     // todo impl setting
 
@@ -1246,8 +1246,9 @@ const registerLanguageProviders = () => {
     // todo codeActions to shorten, unshorten options, subcommands (aliases)
 }
 
-const registerUpdatePathsOnRename = () => {
+const registerUpdateOnFileRename = () => {
     workspace.onDidRenameFiles(async ({ files: renamedFiles }) => {
+        if (!getExtensionSetting('updatePathsOnFileRename')) return
         // todo done for demo purposes / don't make implicit edits
         const documentsToParse = window.visibleTextEditors.map(({ document }) => document).filter(document => isSupportedDocument(document))
         // const updateLocations

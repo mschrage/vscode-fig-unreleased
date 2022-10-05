@@ -61,9 +61,10 @@
                     "type": "boolean",
                     "default": true
                 },
-                "figUnreleased.updatePathsOnRename": {
+                "figUnreleased.updatePathsOnFileRename": {
                     "type": "boolean",
-                    "description": "Auto update file paths in shell files / package.json scripts on file rename"
+                    "description": "Auto update file paths in shell files / package.json scripts on file rename",
+                    "default": true
                 }
             }
         }

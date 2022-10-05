@@ -78,8 +78,9 @@ const globalSettings = {
 }
 
 // #region Constants
-const SUPPORTED_SHELL_SELECTOR: string[] = ['bat', 'shellscript']
-const SUPPORTED_SELECTOR: DocumentSelector = [...SUPPORTED_SHELL_SELECTOR, 'json', 'jsonc']
+const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript']
+const SUPPORTED_PACKAGE_JSON_SELECTOR: DocumentSelector = { pattern: '**/package.json' }
+const SUPPORTED_ALL_SELECTOR: DocumentSelector = [...SUPPORTED_SHELL_SELECTOR, SUPPORTED_PACKAGE_JSON_SELECTOR]
 
 /** this commands (specs) come from npm packages
  * they should be probably installed locally */
@@ -463,7 +464,7 @@ const fixPathArgRange = (inputString: string, startOffset: number, rangePos: [Po
 }
 
 const isSupportedDocument = (document: TextDocument) => {
-    return languages.match(SUPPORTED_SHELL_SELECTOR, document) || document.uri.path.endsWith('package.json')
+    return languages.match(SUPPORTED_ALL_SELECTOR, document)
 }
 
 export const guessOptionSimilarName = (invalidName: string, validNames: string[]) => {
@@ -942,11 +943,10 @@ const provideRangeFromDocumentPositionShellFile: DocumentWithPos<Range> = (docum
     return line.range
 }
 
-const provideRangeFromDocumentPosition: DocumentWithPos<Range> = (document, position) => {
+const provideRangeFromDocumentPosition: DocumentWithPos<Range | undefined> = (document, position) => {
     // todo fix \"
-    return document.uri.path.endsWith('package.json')
-        ? provideRangeFromDocumentPositionPackageJson(document, position)
-        : provideRangeFromDocumentPositionShellFile(document, position)
+    if (languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document)) return provideRangeFromDocumentPositionPackageJson(document, position)
+    if (languages.match(SUPPORTED_SHELL_SELECTOR, document)) return provideRangeFromDocumentPositionShellFile(document, position)
 }
 // #endregion
 
@@ -984,7 +984,7 @@ const getInputCommandsPackageJson = (document: TextDocument) => {
 
 const getAllCommandsLocations = (document: TextDocument) => {
     const outputRanges: Range[] = []
-    const inputRanges = languages.match(['json', 'jsonc'], document) ? getInputCommandsPackageJson(document) : getInputCommandsShellFile(document)
+    const inputRanges = languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document) ? getInputCommandsPackageJson(document) : getInputCommandsShellFile(document)
     for (const range of inputRanges ?? []) {
         const allCommands = getAllCommandsFromString(document.getText(range))
         outputRanges.push(
@@ -1019,7 +1019,7 @@ const registerCommands = () => {
 
 const registerLanguageProviders = () => {
     languages.registerCompletionItemProvider(
-        SUPPORTED_SELECTOR,
+        SUPPORTED_ALL_SELECTOR,
         {
             async provideCompletionItems(document, position, token, context) {
                 const commandRange = provideRangeFromDocumentPosition(document, position)
@@ -1039,7 +1039,7 @@ const registerLanguageProviders = () => {
         '.',
     )
 
-    languages.registerSignatureHelpProvider(SUPPORTED_SELECTOR, {
+    languages.registerSignatureHelpProvider(SUPPORTED_ALL_SELECTOR, {
         provideSignatureHelp(document, position, token, context) {
             const commandRange = provideRangeFromDocumentPosition(document, position)
             if (!commandRange) return
@@ -1067,7 +1067,7 @@ const registerLanguageProviders = () => {
             }
         },
     })
-    languages.registerHoverProvider(SUPPORTED_SELECTOR, {
+    languages.registerHoverProvider(SUPPORTED_ALL_SELECTOR, {
         provideHover(document, position) {
             const commandRange = provideRangeFromDocumentPosition(document, position)
             if (!commandRange) return
@@ -1135,7 +1135,7 @@ const registerLanguageProviders = () => {
         }
     }
 
-    languages.registerDefinitionProvider(SUPPORTED_SELECTOR, {
+    languages.registerDefinitionProvider(SUPPORTED_ALL_SELECTOR, {
         provideDefinition(document, position, token) {
             const { contents, uri, range } = getFilePathPart(document, position) ?? {}
             if (!contents) return
@@ -1159,7 +1159,7 @@ const registerLanguageProviders = () => {
         commands.executeCommand('revealInExplorer', Uri.joinPath(cwd, uri.path.slice(1)))
     })
 
-    languages.registerRenameProvider(SUPPORTED_SELECTOR, {
+    languages.registerRenameProvider(SUPPORTED_ALL_SELECTOR, {
         async prepareRename(document, position, token) {
             const { range, uri } = getFilePathPart(document, position) ?? {}
             if (!range) throw new Error('You cannot rename this element')
@@ -1189,7 +1189,7 @@ const registerLanguageProviders = () => {
     const semanticLegend = new SemanticTokensLegend(Object.values(tempTokensMap))
 
     languages.registerDocumentSemanticTokensProvider(
-        SUPPORTED_SELECTOR,
+        SUPPORTED_ALL_SELECTOR,
         {
             provideDocumentSemanticTokens(document, token) {
                 const builder = new SemanticTokensBuilder(semanticLegend)
@@ -1210,7 +1210,7 @@ const registerLanguageProviders = () => {
         semanticLegend,
     )
 
-    languages.registerSelectionRangeProvider(SUPPORTED_SELECTOR, {
+    languages.registerSelectionRangeProvider(SUPPORTED_ALL_SELECTOR, {
         provideSelectionRanges(document, positions, token) {
             const ranges: SelectionRange[] = []
             for (const position of positions) {

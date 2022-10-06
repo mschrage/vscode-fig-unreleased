@@ -78,7 +78,8 @@
     "scripts": {
         "start": "node build.mjs --watch",
         "build": "node build.mjs",
-        "test": "vitest src/tests.spec.ts --globals"
+        "test": "vitest src/tests.spec.ts --globals",
+        "package": "vsce package --no-dependencies"
     },
     "dependencies": {
         "@types/lodash": "^4.14.186",

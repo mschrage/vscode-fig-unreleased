@@ -1308,6 +1308,7 @@ const registerLinter = () => {
                 message,
                 range: new Range(...range),
                 severity: DiagnosticSeverity.Information,
+                source: 'fig',
                 // code
             })),
         )

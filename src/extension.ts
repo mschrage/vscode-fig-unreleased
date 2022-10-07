@@ -1086,30 +1086,6 @@ const registerLanguageProviders = () => {
         },
     })
 
-    const SCHEME = 'FIG_UNRELEASED_REVEAL_FILE'
-    workspace.registerFileSystemProvider(SCHEME, {
-        createDirectory() {},
-        delete() {},
-        onDidChangeFile() {
-            return { dispose() {} }
-        },
-        readDirectory() {
-            return []
-        },
-        readFile() {
-            const startContent = 'Reveal in explorer'
-            return new TextEncoder().encode(startContent)
-        },
-        rename() {},
-        stat() {
-            return { ctime: 0, mtime: 0, size: 0, type: 0 }
-        },
-        watch() {
-            return { dispose() {} }
-        },
-        writeFile(uri, content) {},
-    })
-
     const pathStringToUri = (document: TextDocument, contents: string) => {
         const cwdUri = getCwdUri(document)
         if (!cwdUri) return
@@ -1143,20 +1119,12 @@ const registerLanguageProviders = () => {
             return [
                 {
                     targetRange: new Range(new Position(0, 0), new Position(0, 100)),
-                    targetUri: Uri.from({ scheme: SCHEME, path: `/${contents}` }),
+                    targetUri: uri,
                     // todo use inner
                     originSelectionRange: range,
                 } as LocationLink,
             ]
         },
-    })
-    window.onDidChangeActiveTextEditor(async editor => {
-        const uri = editor?.document.uri
-        if (uri?.scheme !== SCHEME) return
-        await commands.executeCommand('workbench.action.closeActiveEditor')
-        const cwd = getCwdUri({ uri })
-        if (!cwd) return
-        commands.executeCommand('revealInExplorer', Uri.joinPath(cwd, uri.path.slice(1)))
     })
 
     languages.registerRenameProvider(SUPPORTED_ALL_SELECTOR, {

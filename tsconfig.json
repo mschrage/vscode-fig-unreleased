@@ -1,6 +1,15 @@
 {
-    "extends": "@zardoy/tsconfig/tsconfig",
     "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "allowSyntheticDefaultImports": true,
+        "moduleResolution": "node",
+        "noEmit": true,
+        "noEmitOnError": true,
+        "skipLibCheck": true,
+        "noImplicitAny": false,
+        "forceConsistentCasingInFileNames": true,
+        "useUnknownInCatchVariables": false,
         "lib": [
             "ESNext",
             "WebWorker"

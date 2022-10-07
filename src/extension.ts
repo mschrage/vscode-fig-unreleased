@@ -166,7 +166,6 @@ const figBaseSuggestionToVscodeCompletion = (
         startPos,
         specName,
         rangeShouldReplace = true,
-        currentPartOffset,
     }: DocumentInfoForCompl & { sortTextPrepend: string },
 ): CompletionItem | undefined => {
     const {
@@ -921,11 +920,14 @@ const fullCommandParse = (
     collectedData.collectedCompletionsIncomplete = true
 }
 
-type DocumentWithPos<R> = (document: TextDocument, position: Position) => R
+type DocumentWithPos = {
+    document: TextDocument
+    position: Position
+}
 
 // #region Range providers
 // they handle requesting position in file
-const provideRangeFromDocumentPositionPackageJson: DocumentWithPos<Range> = (document, position) => {
+const provideRangeFromDocumentPositionPackageJson = ({ document, position }: DocumentWithPos) => {
     const offset = document.offsetAt(position)
     const location = getLocation(document.getText(), offset)
     if (!location?.matches(['scripts', '*'])) return
@@ -936,17 +938,17 @@ const provideRangeFromDocumentPositionPackageJson: DocumentWithPos<Range> = (doc
 }
 
 const shellBannedLineRegex = /^\s*(#|::|if|else|fi|return|function|"|'|[\w\d]+(=|\())/i
-const provideRangeFromDocumentPositionShellFile: DocumentWithPos<Range> = (document, position) => {
+const provideRangeFromDocumentPositionShellFile = ({ document, position }: DocumentWithPos) => {
     const line = document.lineAt(position)
     shellBannedLineRegex.lastIndex = 0
     if (shellBannedLineRegex.test(line.text)) return
     return line.range
 }
 
-const provideRangeFromDocumentPosition: DocumentWithPos<Range | undefined> = (document, position) => {
+const provideRangeFromDocumentPosition = ({ document, position }: DocumentWithPos) => {
     // todo fix \"
-    if (languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document)) return provideRangeFromDocumentPositionPackageJson(document, position)
-    if (languages.match(SUPPORTED_SHELL_SELECTOR, document)) return provideRangeFromDocumentPositionShellFile(document, position)
+    if (languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document)) return provideRangeFromDocumentPositionPackageJson({ document, position })
+    if (languages.match(SUPPORTED_SHELL_SELECTOR, document)) return provideRangeFromDocumentPositionShellFile({ document, position })
 }
 // #endregion
 
@@ -1022,7 +1024,7 @@ const registerLanguageProviders = () => {
         SUPPORTED_ALL_SELECTOR,
         {
             async provideCompletionItems(document, position, token, context) {
-                const commandRange = provideRangeFromDocumentPosition(document, position)
+                const commandRange = provideRangeFromDocumentPosition({ document, position })
                 if (!commandRange) return
                 const collectedData: ParseCollectedData = {}
                 fullCommandParse(document, commandRange, position, collectedData, 'completions')
@@ -1041,7 +1043,7 @@ const registerLanguageProviders = () => {
 
     languages.registerSignatureHelpProvider(SUPPORTED_ALL_SELECTOR, {
         provideSignatureHelp(document, position, token, context) {
-            const commandRange = provideRangeFromDocumentPosition(document, position)
+            const commandRange = provideRangeFromDocumentPosition({ document, position })
             if (!commandRange) return
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
@@ -1069,7 +1071,7 @@ const registerLanguageProviders = () => {
     })
     languages.registerHoverProvider(SUPPORTED_ALL_SELECTOR, {
         provideHover(document, position) {
-            const commandRange = provideRangeFromDocumentPosition(document, position)
+            const commandRange = provideRangeFromDocumentPosition({ document, position })
             if (!commandRange) return
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, commandRange, position, collectedData, 'hover')
@@ -1092,8 +1094,8 @@ const registerLanguageProviders = () => {
         return Uri.joinPath(cwdUri, contents)
     }
 
-    const getFilePathPart: DocumentWithPos<{ range: Range; contents: string; uri?: Thenable<Uri | undefined> } | undefined> = (document, position) => {
-        const commandRange = provideRangeFromDocumentPosition(document, position)
+    const getFilePathPart = ({ document, position }: DocumentWithPos, checkFileExistence: boolean) => {
+        const commandRange = provideRangeFromDocumentPosition({ document, position })
         if (!commandRange) return
         const collectedData: ParseCollectedData = {}
         fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
@@ -1104,16 +1106,19 @@ const registerLanguageProviders = () => {
             range: currentFilePathPart[3],
             contents: currentFilePathPart[0],
             // uri of existing file
-            uri: workspace.fs.stat(uri).then(
-                () => uri,
-                () => undefined,
-            ),
+            uri,
+            fileExists: checkFileExistence
+                ? workspace.fs.stat(uri).then(
+                      () => true,
+                      () => false,
+                  )
+                : undefined,
         }
     }
 
     languages.registerDefinitionProvider(SUPPORTED_ALL_SELECTOR, {
         provideDefinition(document, position, token) {
-            const { contents, uri, range } = getFilePathPart(document, position) ?? {}
+            const { contents, uri, range } = getFilePathPart({ document, position }, true) ?? {}
             if (!contents) return
             // also its possible to migrate to link provider that support command: protocol
             return [
@@ -1129,17 +1134,17 @@ const registerLanguageProviders = () => {
 
     languages.registerRenameProvider(SUPPORTED_ALL_SELECTOR, {
         async prepareRename(document, position, token) {
-            const { range, uri } = getFilePathPart(document, position) ?? {}
+            const { range, fileExists } = getFilePathPart({ document, position }, true) ?? {}
             if (!range) throw new Error('You cannot rename this element')
-            if (!(await uri)) throw new Error("Renaming file doesn't exist")
+            if (!(await fileExists)) throw new Error("Renaming file doesn't exist")
             return range
         },
         async provideRenameEdits(document, position, newName, token) {
-            const { range, uri } = getFilePathPart(document, position) ?? {}
-            if (!uri) return
+            const { range, uri, fileExists } = getFilePathPart({ document, position }, true) ?? {}
+            if (!uri || !(await fileExists)) return
             const edit = new WorkspaceEdit()
             edit.set(document.uri, [{ range, newText: newName }])
-            edit.renameFile(await uri, Uri.joinPath(getCwdUri({ uri: await uri })!, newName))
+            edit.renameFile(uri, Uri.joinPath(getCwdUri({ uri })!, newName))
             return edit
         },
     })
@@ -1150,7 +1155,6 @@ const registerLanguageProviders = () => {
         subcommand: 'number',
         'option-arg': 'method',
         option: 'enumMember',
-        // option:
         arg: 'string',
         dangerous: 'keyword',
     }
@@ -1182,7 +1186,7 @@ const registerLanguageProviders = () => {
         provideSelectionRanges(document, positions, token) {
             const ranges: SelectionRange[] = []
             for (const position of positions) {
-                const commandRange = provideRangeFromDocumentPosition(document, position)
+                const commandRange = provideRangeFromDocumentPosition({ document, position })
                 if (!commandRange) continue
                 const startPos = commandRange.start
                 const text = document.getText(commandRange)

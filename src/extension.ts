@@ -1120,10 +1120,9 @@ const registerLanguageProviders = () => {
         provideDefinition(document, position, token) {
             const { contents, uri, range } = getFilePathPart({ document, position }, true) ?? {}
             if (!contents) return
-            // also its possible to migrate to link provider that support command: protocol
             return [
                 {
-                    targetRange: new Range(new Position(0, 0), new Position(0, 100)),
+                    targetRange: new Range(new Position(0, 0), new Position(1000, 1000)),
                     targetUri: uri,
                     // todo use inner
                     originSelectionRange: range,

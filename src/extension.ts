@@ -143,7 +143,8 @@ type DocumentInfoForCompl = DocumentInfo & {
 
 type UsedOption = string
 
-// #endregion// #region Suggestions getters
+// #endregion
+// #region Suggestions generators
 // they return vscode suggestions
 
 // current sorting is hardcoded:
@@ -189,8 +190,8 @@ const figBaseSuggestionToVscodeCompletion = (
     completion.insertText = insertValue !== undefined ? new SnippetString().appendText(insertValue) : undefined
     if (completion.insertText) completion.insertText.value = completion.insertText.value.replace(/{cursor\\}/, '$1')
     completion.documentation = (description && new MarkdownString(description)) || undefined
-    // lets be sure its consistent
-    completion.sortText = sortTextPrepend + priority.toString().padStart(3, '0')
+    // vscode uses .sort() on completions
+    completion.sortText = sortTextPrepend + (100 - priority).toString().padStart(3, '0')
     if (kind) completion.kind = kind
     if (deprecated) completion.tags = [CompletionItemTag.Deprecated]
     if (currentPartValue.trim() && realPos && startPos) {
@@ -231,9 +232,8 @@ const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepen
 }
 
 // todo to options, introduce flattened lvl
-const listFilesCompletions = async (cwd: Uri, stringContents: string, completionPos: Position | undefined, globFilter?: string, includeType?: FileType) => {
+const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?: string, includeType?: FileType) => {
     const folderPath = stringContents.split('/').slice(0, -1).join('/')
-    const pathLastPart = stringContents.split('/').pop()!
     let filesList: [name: string, type: FileType][]
     try {
         filesList = await workspace.fs.readDirectory(Uri.joinPath(cwd, folderPath))
@@ -241,52 +241,57 @@ const listFilesCompletions = async (cwd: Uri, stringContents: string, completion
         filesList = []
     }
     const isMatch = globFilter && picomatch(globFilter)
-    // todo insertText
-    return filesList
-        .map(([name, type]): CompletionItem => {
-            if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined!
+    return compact(
+        filesList.map(([name, type]): Fig.Suggestion => {
+            if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
             const isDir = type & FileType.Directory
             return {
-                label: isDir ? `${name}/` : name,
-                kind: !isDir ? CompletionItemKind.File : CompletionItemKind.Folder,
-                detail: name,
-                // sort bind
-                sortText: `a${isDir ? 1 : 2}`,
-                command: isDir
-                    ? {
-                          command: 'editor.action.triggerSuggest',
-                          title: '',
-                      }
-                    : undefined,
-                // todo-low
-                range: completionPos && new Range(completionPos.translate(0, -pathLastPart.replace(/^ /, '').length), completionPos),
+                name: isDir ? `${name}/` : name,
+                type: isDir ? 'folder' : 'file',
+                // display by default folders above files to align with default explorer look
+                priority: isDir ? 71 : 70,
             }
-        })
-        .filter(Boolean)
+        }),
+    )
 }
 
-const templateToVscodeCompletion = async (_template: Fig.Template, info: DocumentInfo) => {
-    const templates = ensureArray(_template)
-    const completions: CompletionItem[] = []
+/** doesn't support history */
+const templateToSuggestions = async (inputTemplate: Fig.Template, info: DocumentInfo) => {
+    const templates = ensureArray(inputTemplate)
     let includeFilesKindType: FileType | true | undefined
+    const suggestions: Fig.Suggestion[] = []
     if (templates.includes('folders')) includeFilesKindType = FileType.Directory
     if (templates.includes('filepaths')) includeFilesKindType = true
     // todo
     const includeHelp = templates.includes('help')
     if (includeFilesKindType) {
         const cwd = getCwdUri(info._document)
-        if (cwd)
-            completions.push(
-                ...(await listFilesCompletions(
-                    cwd,
-                    info.currentPartValue ?? '',
-                    info.realPos,
-                    // undefined,
-                    // includeFilesKindType === true ? undefined : includeFilesKindType,
-                )),
+        if (cwd) {
+            suggestions.push(
+                ...(await getFilesSuggestions(cwd, info.currentPartValue ?? '', undefined, includeFilesKindType === true ? undefined : includeFilesKindType)),
             )
+        }
     }
-    return completions
+    return suggestions
+}
+
+const templateOrGeneratorsToCompletion = async ({ template: _template, generators }: Pick<Fig.Arg, 'template' | 'generators'>, info: DocumentInfo) => {
+    const collectedSuggestions = _template ? await templateToSuggestions(_template, info) : []
+    for (const { template, filterTemplateSuggestions } of ensureArray(generators ?? [])) {
+        if (!template) continue
+        let suggestions = await templateToSuggestions(template, info)
+        if (filterTemplateSuggestions) {
+            suggestions = filterTemplateSuggestions(
+                suggestions.map(suggestion => ({
+                    ...suggestion,
+                    name: suggestion.name as string,
+                    context: { templateType: template as any },
+                })),
+            )
+        }
+        collectedSuggestions.push(...suggestions)
+    }
+    return collectedSuggestions.map(suggestion => figSuggestionToCompletion(suggestion, info))
 }
 
 const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: DocumentInfo): CompletionItem[] | undefined => {
@@ -320,7 +325,7 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
     )
 }
 
-const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, documentInfo: DocumentInfoForCompl) => {
+const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: DocumentInfoForCompl) => {
     if (typeof suggestion === 'string')
         suggestion = {
             name: suggestion,
@@ -328,34 +333,38 @@ const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, document
     const completion = figBaseSuggestionToVscodeCompletion(suggestion, ensureArray(suggestion.name)[0]!, {
         kind: CompletionItemKind.Constant,
         sortTextPrepend: 'a',
-        ...documentInfo,
+        ...info,
     })
+    if (oneOf(suggestion.type, 'folder', 'file')) {
+        const isDir = suggestion.type === 'folder'
+        const { currentPartValue, realPos } = info
+        const pathLastPart = currentPartValue.split('/').pop()!
+        Object.assign(completion, {
+            kind: isDir ? CompletionItemKind.Folder : CompletionItemKind.File,
+            // restore icons on dirs, since we add trailing /
+            detail: isDir ? (suggestion.name as string).slice(0, -1) : undefined,
+            command: isDir
+                ? {
+                      command: 'editor.action.triggerSuggest',
+                      title: '',
+                  }
+                : undefined,
+            // todo-low
+            range: realPos && new Range(realPos.translate(0, -pathLastPart.replace(/^ /, '').length), realPos),
+        } as CompletionItem)
+    }
     return completion
 }
 
 const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => {
     const completions: CompletionItem[] = []
-    // todo optionsCanBreakVariadicArg suggestCurrentToken
+    // does it make sense to support it here?
+    if (arg.suggestCurrentToken) completions.push({ label: documentInfo.currentPartValue, kind: CompletionItemKind.Text, sortText: 'a000' })
+    // todo optionsCanBreakVariadicArg
     const { suggestions, template, default: defaultValue, generators } = arg
     // todo expect all props, handle type
     if (suggestions) completions.push(...compact(suggestions.map(suggestion => figSuggestionToCompletion(suggestion, documentInfo))))
-    if (template) completions.push(...(await templateToVscodeCompletion(template, documentInfo)))
-    if (generators) {
-        for (const { template, filterTemplateSuggestions } of ensureArray(generators)) {
-            // todo
-            if (!template) continue
-            let suggestions = await templateToVscodeCompletion(template, documentInfo)
-            if (filterTemplateSuggestions)
-                suggestions = filterTemplateSuggestions(
-                    suggestions.map(suggestion => ({
-                        ...suggestion,
-                        name: suggestion.label as string,
-                        context: { templateType: 'filepaths' },
-                    })),
-                ) as any
-            completions.push(...suggestions)
-        }
-    }
+    completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
     if (defaultValue) {
         for (const completion of completions) {
             if (typeof completion.label !== 'object') continue
@@ -1291,13 +1300,14 @@ const registerLinter = () => {
             doLinting(document)
         }
     }
+    lintEditors()
+
+    window.onDidChangeVisibleTextEditors(lintEditors)
     workspace.onDidChangeTextDocument(({ document }) => {
         // todo context changes: scripts
         if (!supportedDocuments.includes(document)) return
         doLinting(document)
     })
-    lintEditors()
-    window.onDidChangeVisibleTextEditors(lintEditors)
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
         if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintEditors()
     })

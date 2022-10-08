@@ -299,16 +299,14 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
     return compact(
         subcommands.map(subcommand => {
             const nameArr = ensureArray(subcommand.name)
-            const completion = figBaseSuggestionToVscodeCompletion(
-                subcommand,
-                nameArr.find(name => name.toLowerCase().includes(currentPartValue.toLowerCase())) ?? nameArr[0],
-                {
-                    ...info,
-                    kind: CompletionItemKind.Module,
-                    sortTextPrepend: 'c',
-                },
-            )
+            const completion = figBaseSuggestionToVscodeCompletion(subcommand, nameArr.join(', '), {
+                ...info,
+                kind: CompletionItemKind.Module,
+                sortTextPrepend: 'c',
+            })
             if (!completion) return
+            // todo use the same logic from options
+            completion.insertText = nameArr.find(name => name.toLowerCase().includes(currentPartValue.toLowerCase())) ?? nameArr[0]
             let insertSpace = subcommand.requiresSubcommand /*  && globalSettings.insertOnCompletionAccept === 'space' */
             if (!insertSpace) {
                 // todo is that right?
@@ -398,7 +396,7 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
     if (dependsOn && !dependsOn.every(name => usedOptionsNames.includes(name))) return
     if (exclusiveOn?.some(name => usedOptionsNames.includes(name))) return
 
-    const optionsRender = currentOptionsArr.join(' ')
+    const optionsRender = currentOptionsArr.join(', ')
     const completion = figBaseSuggestionToVscodeCompletion(option, optionsRender, { ...info, sortTextPrepend: 'd' })
     if (!completion) return
     ;(completion.label as CompletionItemLabel).detail = isRequired ? 'REQUIRED' : getArgPreviewFromOption(option)

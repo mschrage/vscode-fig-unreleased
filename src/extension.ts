@@ -359,7 +359,7 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
     // does it make sense to support it here?
     if (arg.suggestCurrentToken) completions.push({ label: documentInfo.currentPartValue, kind: CompletionItemKind.Text, sortText: 'a000' })
     // todo optionsCanBreakVariadicArg
-    const { suggestions, template, default: defaultValue, generators } = arg
+    const { suggestions, default: defaultValue } = arg
     // todo expect all props, handle type
     if (suggestions) completions.push(...compact(suggestions.map(suggestion => figSuggestionToCompletion(suggestion, documentInfo))))
     completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
@@ -469,7 +469,7 @@ const fixPathArgRange = (inputString: string, startOffset: number, rangePos: [Po
     return ["'", '"'].includes(char) ? [rangePos[0].translate(0, 1), rangePos[1].translate(0, -1)] : rangePos
 }
 
-const isSupportedDocument = (document: TextDocument) => {
+const isDocumentSupported = (document: TextDocument) => {
     return languages.match(SUPPORTED_ALL_SELECTOR, document)
 }
 
@@ -959,8 +959,8 @@ const provideRangeFromDocumentPosition = ({ document, position }: DocumentWithPo
 }
 // #endregion
 
-// #region All commands location
-// they return all command location for requesting file
+// #region All command locations
+// they return all command locations for requesting file
 const getInputCommandsShellFile = (document: TextDocument) => {
     const ranges: Range[] = []
     for (let lineNum = 0; lineNum < document.lineCount; lineNum++) {
@@ -1228,7 +1228,7 @@ const registerUpdateOnFileRename = () => {
     workspace.onDidRenameFiles(async ({ files: renamedFiles }) => {
         if (!getExtensionSetting('updatePathsOnFileRename')) return
         // todo done for demo purposes / don't make implicit edits
-        const documentsToParse = window.visibleTextEditors.map(({ document }) => document).filter(document => isSupportedDocument(document))
+        const documentsToParse = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
         // const updateLocations
         const edit = new WorkspaceEdit()
         for (const document of documentsToParse) {
@@ -1293,12 +1293,15 @@ const registerLinter = () => {
     }
     const lintEditors = () => {
         // todo use tabs instead
-        supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isSupportedDocument(document))
+        supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
         for (const document of supportedDocuments) {
             doLinting(document)
         }
     }
-    lintEditors()
+    // do parsing & linting after ext host initializing
+    setTimeout(() => {
+        lintEditors()
+    }, 0)
 
     window.onDidChangeVisibleTextEditors(lintEditors)
     workspace.onDidChangeTextDocument(({ document }) => {

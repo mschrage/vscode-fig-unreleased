@@ -79,7 +79,7 @@ const globalSettings = {
 
 // #region Constants
 const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript']
-const SUPPORTED_PACKAGE_JSON_SELECTOR: DocumentSelector = { pattern: '**/package.json' }
+const SUPPORTED_PACKAGE_JSON_SELECTOR: DocumentSelector = { pattern: '**/package.json', scheme: '*' }
 const SUPPORTED_ALL_SELECTOR: DocumentSelector = [...SUPPORTED_SHELL_SELECTOR, SUPPORTED_PACKAGE_JSON_SELECTOR]
 
 /** this commands (specs) come from npm packages

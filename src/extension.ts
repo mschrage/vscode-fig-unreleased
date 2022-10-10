@@ -401,13 +401,27 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
           //       .filter(([, index]) => index !== -1)?.[0]?.[0] || option.name[0]
           option.name.find(name => name.toLowerCase().includes(typedOption.toLowerCase())) || option.name[0]
         : option.name
-    const defaultInsertSpace =
-        globalSettings.insertOnCompletionAccept === 'space' && info.inputString[info.currentPartOffset + info.currentPartValue.length] !== ' '
-    const defaultInsertText = insertOption + seperator + (seperator.length !== 1 && defaultInsertSpace ? ' ' : '')
+    let defaultInsertText = insertOption + seperator
+
+    const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
+    const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
+
+    const settingInsertSpace = globalSettings.insertOnCompletionAccept === 'space'
+    /** Wether to insert space if insertText is not overriden */
+    let defaultInsertSpace = settingInsertSpace && !nextTwoChars.startsWith(' ')
+    const isInsertTextOverriden = completion.insertText !== undefined
+    const reuseTwoNextSpaces = settingInsertSpace && nextTwoChars === ' '.repeat(2) && !isInsertTextOverriden
+    if (!reuseTwoNextSpaces) defaultInsertSpace ||= Array.isArray(option.args) ? !!option.args.length : !!option.args
+
+    if (seperator.length !== 1 && defaultInsertSpace) defaultInsertText += ' '
     completion.insertText ??= defaultInsertText
-    completion.command = {
-        command: ACCEPT_COMPLETION_COMMAND,
-        title: '',
+
+    if (completion.insertText !== getCompletionLabelName(completion) || reuseTwoNextSpaces) {
+        completion.command = {
+            command: ACCEPT_COMPLETION_COMMAND,
+            arguments: [{ cursorRight: reuseTwoNextSpaces }],
+            title: '',
+        }
     }
 
     return completion
@@ -1019,7 +1033,8 @@ type SemanticLegendType = typeof semanticLegendTypes[number]
 const ACCEPT_COMPLETION_COMMAND = `_${CONTRIBUTION_PREFIX}.acceptCompletion`
 
 const registerCommands = () => {
-    commands.registerCommand(ACCEPT_COMPLETION_COMMAND, () => {
+    commands.registerCommand(ACCEPT_COMPLETION_COMMAND, async ({ cursorRight } = {}) => {
+        if (cursorRight) await commands.executeCommand('cursorRight')
         commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
     })

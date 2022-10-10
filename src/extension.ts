@@ -36,6 +36,7 @@ import _ from 'lodash'
 import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
+import { niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
 
@@ -56,6 +57,7 @@ export const activate = ({}: ExtensionContext) => {
     })
 
     registerCommands()
+    prepareNiceLookingCompletinons()
     registerLanguageProviders()
     registerUpdateOnFileRename()
     registerLinter()

@@ -37,6 +37,8 @@ import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
 
+const CONTRIBUTION_PREFIX = 'figUnreleased'
+
 const getFigSubcommand = (__spec: Fig.Spec) => {
     const _spec = typeof __spec === 'function' ? __spec() : __spec
     const spec = 'versionedSpecPath' in _spec ? undefined! : _spec
@@ -415,7 +417,7 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
     const defaultInsertText = insertOption + seperator + (seperator.length !== 1 && defaultInsertSpace ? ' ' : '')
     completion.insertText ??= defaultInsertText
     completion.command = {
-        command: APPLY_SUGGESTION_COMPLETION_COMMAND,
+        command: ACCEPT_COMPLETION_COMMAND,
         title: '',
     }
 
@@ -438,7 +440,7 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 // #endregion
 
 // #region Simple utils
-const getExtensionSetting = <T = any>(key: string) => workspace.getConfiguration('figUnreleased').get<T>(key)
+const getExtensionSetting = <T = any>(key: string) => workspace.getConfiguration(CONTRIBUTION_PREFIX).get<T>(key)
 
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
     // todo (easy) parse cd commands
@@ -1025,10 +1027,10 @@ const getAllCommandsLocations = (document: TextDocument) => {
 const semanticLegendTypes = ['command', 'subcommand', 'arg', 'option', 'option-arg', 'dangerous'] as const
 type SemanticLegendType = typeof semanticLegendTypes[number]
 
-const APPLY_SUGGESTION_COMPLETION_COMMAND = '_applyFigSuggestion'
+const ACCEPT_COMPLETION_COMMAND = `_${CONTRIBUTION_PREFIX}.acceptCompletion`
 
 const registerCommands = () => {
-    commands.registerCommand(APPLY_SUGGESTION_COMPLETION_COMMAND, () => {
+    commands.registerCommand(ACCEPT_COMPLETION_COMMAND, () => {
         commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
     })

@@ -65,6 +65,10 @@
                     "type": "boolean",
                     "description": "Auto update file paths in shell files / package.json scripts on file rename",
                     "default": true
+                },
+                "figUnreleased.semanticHighlighting": {
+                    "type": "boolean",
+                    "default": true
                 }
             }
         }

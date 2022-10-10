@@ -8,6 +8,7 @@ import {
     CompletionItemLabel,
     CompletionItemTag,
     DiagnosticSeverity,
+    Disposable,
     DocumentSelector,
     ExtensionContext,
     FileType,
@@ -22,6 +23,7 @@ import {
     SemanticTokensLegend,
     SnippetString,
     TextDocument,
+    TextDocumentContentChangeEvent,
     TextEdit,
     Uri,
     window,
@@ -29,14 +31,13 @@ import {
     WorkspaceEdit,
 } from 'vscode'
 import { API } from './extension-api'
-import { niceLookingCompletion } from '@zardoy/vscode-utils/build/completions'
 import { compact, ensureArray, findCustomArray, oneOf } from '@zardoy/utils'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
 import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
-import { niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
+import { getCompletionLabelName, niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
 
@@ -59,6 +60,7 @@ export const activate = ({}: ExtensionContext) => {
     registerCommands()
     prepareNiceLookingCompletinons()
     registerLanguageProviders()
+    registerSemanticHighlighting()
     registerUpdateOnFileRename()
     registerLinter()
     // todo impl setting
@@ -1004,20 +1006,25 @@ const getInputCommandsPackageJson = (document: TextDocument) => {
     return ranges
 }
 
-const getAllCommandsLocations = (document: TextDocument) => {
+const getAllInputCommandLocations = (document: TextDocument) => {
+    return languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document) ? getInputCommandsPackageJson(document) : getInputCommandsShellFile(document)
+}
+
+const getAllCommandLocations = (document: TextDocument, inputRanges = getAllInputCommandLocations(document)) => {
     const outputRanges: Range[] = []
-    const inputRanges = languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document) ? getInputCommandsPackageJson(document) : getInputCommandsShellFile(document)
     for (const range of inputRanges ?? []) {
         const allCommands = getAllCommandsFromString(document.getText(range))
+        const stringStartPos = range.start
         outputRanges.push(
             ...compact(
-                allCommands.map(parts => {
+                allCommands.map(({ parts, start }, i) => {
                     const firstPart = parts[0]
                     if (!firstPart) return
                     const [, startOffset] = firstPart
                     const [lastContents, endOffset] = parts.at(-1)
-                    const startPos = range.start
-                    return new Range(startPos.translate(0, startOffset), startPos.translate(0, endOffset + lastContents.length))
+                    // hack for selection provider
+                    const startPos = stringStartPos.translate(0, i ? startOffset : start)
+                    return new Range(startPos, stringStartPos.translate(0, endOffset + lastContents.length))
                 }),
             ),
         )
@@ -1169,39 +1176,6 @@ const registerLanguageProviders = () => {
         },
     })
 
-    // temporarily use existing tokens, instead of defining own in demo purposes
-    const tempTokensMap: Record<SemanticLegendType, string> = {
-        command: 'namespace',
-        subcommand: 'number',
-        'option-arg': 'method',
-        option: 'enumMember',
-        arg: 'string',
-        dangerous: 'keyword',
-    }
-    const semanticLegend = new SemanticTokensLegend(Object.values(tempTokensMap))
-
-    languages.registerDocumentSemanticTokensProvider(
-        SUPPORTED_ALL_SELECTOR,
-        {
-            provideDocumentSemanticTokens(document, token) {
-                const builder = new SemanticTokensBuilder(semanticLegend)
-                const ranges = getAllCommandsLocations(document)
-                for (const range of ranges) {
-                    const collectedData: ParseCollectedData = {}
-                    // too slow! each command parse ~8-15ms
-                    // easy to opt
-                    fullCommandParse(document, range, range.start, collectedData, 'semanticHighlight')
-                    for (const part of collectedData.partsSemanticTypes ?? []) {
-                        builder.push(part[0], tempTokensMap[part[1]])
-                    }
-                }
-
-                return builder.build()
-            },
-        },
-        semanticLegend,
-    )
-
     languages.registerSelectionRangeProvider(SUPPORTED_ALL_SELECTOR, {
         provideSelectionRanges(document, positions, token) {
             const ranges: SelectionRange[] = []
@@ -1238,6 +1212,64 @@ const registerLanguageProviders = () => {
     // todo codeActions to shorten, unshorten options, subcommands (aliases)
 }
 
+const registerSemanticHighlighting = () => {
+    // temporarily use existing tokens, instead of defining own
+    const tempTokensMap: Record<SemanticLegendType, string> = {
+        command: 'namespace',
+        subcommand: 'number',
+        'option-arg': 'method',
+        option: 'enumMember',
+        arg: 'string',
+        dangerous: 'keyword',
+    }
+    const semanticLegend = new SemanticTokensLegend(Object.values(tempTokensMap))
+
+    const semanticTokensProviderListeners: Array<() => void> = []
+    languages.registerDocumentSemanticTokensProvider(
+        SUPPORTED_ALL_SELECTOR,
+        {
+            provideDocumentSemanticTokens(document, token) {
+                if (!getExtensionSetting('semanticHighlighting')) return
+                const builder = new SemanticTokensBuilder(semanticLegend)
+                const ranges = getAllCommandLocations(document)
+                for (const range of ranges) {
+                    const collectedData: ParseCollectedData = {}
+                    // too slow! each command parse ~8-15ms
+                    // easy to opt
+                    fullCommandParse(document, range, range.start, collectedData, 'semanticHighlight')
+                    for (const part of collectedData.partsSemanticTypes ?? []) {
+                        builder.push(part[0], tempTokensMap[part[1]])
+                    }
+                }
+
+                const res = builder.build()
+                return res
+            },
+            onDidChangeSemanticTokens(listener, _, disposables = []) {
+                semanticTokensProviderListeners.push(listener)
+                return {
+                    dispose() {
+                        Disposable.from(...disposables, {
+                            dispose() {
+                                semanticTokensProviderListeners.splice(semanticTokensProviderListeners.indexOf(listener), 1)
+                            },
+                        })
+                    },
+                }
+            },
+        },
+        semanticLegend,
+    )
+
+    workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
+        if (affectsConfiguration('figUnreleased.semanticHighlighting')) {
+            for (const semanticTokensProviderListener of semanticTokensProviderListeners) {
+                semanticTokensProviderListener()
+            }
+        }
+    })
+}
+
 const registerUpdateOnFileRename = () => {
     workspace.onDidRenameFiles(async ({ files: renamedFiles }) => {
         if (!getExtensionSetting('updatePathsOnFileRename')) return
@@ -1247,7 +1279,7 @@ const registerUpdateOnFileRename = () => {
         const edit = new WorkspaceEdit()
         for (const document of documentsToParse) {
             const docTextEdits: TextEdit[] = []
-            const ranges = getAllCommandsLocations(document)
+            const ranges = getAllCommandLocations(document)
             if (!ranges) continue
             for (const range of ranges) {
                 const collectedData: ParseCollectedData = {}

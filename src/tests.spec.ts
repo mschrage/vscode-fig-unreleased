@@ -73,6 +73,16 @@ describe('parseCommandString', () => {
         expect(result?.allParts).toEqual([['', 0, false]])
     })
 
+    test('Globs handling', () => {
+        const { partStart: cursor, ...result } = parseCommandStringWithCursor('spec *.vsix *|.log arg')
+        expect(result?.allParts).toEqual([
+            ['spec', 0, false],
+            ['*.vsix', 5, false],
+            ['*.log', 12, false],
+            ['arg', 18, false],
+        ])
+    })
+
     test('Trim', () => {
         const result = parseCommandStringWithCursor('esbuild "test 2.js" --define:|yes', true)
         expect(result?.currentPartValue).toBe('--define:')

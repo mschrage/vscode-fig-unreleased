@@ -60,11 +60,11 @@ function parse(s, env, opts) {
                 var quote = false
                 var esc = false
                 var out = ''
-                var isGlob = false
+                // var isGlob = false
 
                 for (var i = 0, len = s.length; i < len; i++) {
                     var c = s.charAt(i)
-                    isGlob = isGlob || (!quote && (c === '*' || c === '?'))
+                    // isGlob = isGlob || (!quote && (c === '*' || c === '?'))
                     if (esc) {
                         out += c
                         esc = false
@@ -107,7 +107,7 @@ function parse(s, env, opts) {
                     } else out += c
                 }
 
-                if (isGlob) return { op: 'glob', index: match.index, pattern: out }
+                // if (isGlob) return { op: 'glob', index: match.index, pattern: out }
 
                 return [out, match.index]
 

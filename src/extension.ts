@@ -174,23 +174,10 @@ const figBaseSuggestionToVscodeCompletion = (
         rangeShouldReplace = true,
     }: DocumentInfoForCompl & { sortTextPrepend: string },
 ): CompletionItem | undefined => {
-    const {
-        displayName,
-        insertValue,
-        description,
-        icon,
-        /* isDangerous, */
-        priority = 50,
-        hidden,
-        deprecated,
-    } = baseCompetion
-    const STRING_TRUNCATE_LENGTH = 10
-    let descriptionText = undefined
-    // let descriptionText = (description && markdownToTxt(description)) || undefined
-    // if (descriptionText && descriptionText.length > STRING_TRUNCATE_LENGTH) descriptionText = `${descriptionText!.slice(0, STRING_TRUNCATE_LENGTH)}`
+    const { displayName, insertValue, description, icon, priority = 50, hidden, deprecated } = baseCompetion
 
     if (hidden && currentPartValue !== initialName) return undefined
-    const completion = new CompletionItem({ label: displayName || initialName, description: descriptionText })
+    const completion = new CompletionItem({ label: displayName || initialName })
 
     completion.insertText = insertValue !== undefined ? new SnippetString().appendText(insertValue) : undefined
     if (completion.insertText) completion.insertText.value = completion.insertText.value.replace('{cursor}', '$1')

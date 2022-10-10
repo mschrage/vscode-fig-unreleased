@@ -30,32 +30,47 @@ globalThis.__TEST = true
 
 import { parseCommandString } from './extension'
 
-const stringWithCursor = (inputString: string, cursorMarker = '|') => {
-    const idx = inputString.indexOf(cursorMarker)
-    return [inputString.slice(0, idx) + inputString.slice(idx + 1), idx] as const
+const stringWithPositions = (contents: string) => {
+    const cursorPositions = {} as Record<'$' | '|', number>
+    const replacement = /[\|\$]/
+    let currentMatch: RegExpExecArray | null | undefined
+    while ((currentMatch = replacement.exec(contents))) {
+        const offset = currentMatch.index
+        const matchLength = currentMatch[0]!.length
+        contents = contents.slice(0, offset) + contents.slice(offset + matchLength)
+        cursorPositions[currentMatch[0]] = offset
+    }
+    return [contents, cursorPositions] as const
 }
 
 const parseCommandStringWithCursor = (input: string, sliceStr = false) => {
-    const [str, cursor] = stringWithCursor(input)
-    return parseCommandString(str, cursor, sliceStr)
+    const [str, { '|': cursor, $: partStart }] = stringWithPositions(input)
+    return { ...(parseCommandString(str, cursor, sliceStr) ?? {}), partStart }
 }
 
-const testCommandPart = (input: string, expectedValue: string, expectedOffset: number, expectedIndex?: number) => {
+const testCommandPart = (input: string, expectedValue: string, expectedIndex?: number) => {
     test(`Command part: ${input}`, () => {
-        const { currentPartValue, currentPartOffset, currentPartIndex } = parseCommandStringWithCursor(input) || {}
+        const { currentPartValue, currentPartOffset, currentPartIndex, partStart } = parseCommandStringWithCursor(input) || {}
         expect(currentPartValue).toBe(expectedValue)
-        expect(currentPartOffset).toBe(expectedOffset)
+        expect(currentPartOffset).toBe(partStart)
         if (expectedIndex !== undefined) expect(currentPartIndex).toBe(expectedIndex)
     })
 }
 
 describe('parseCommandString', () => {
+    // parseCommandString('spec *.vsix *.log arg'))
+
     test('Basic', () => {
-        const result = parseCommandStringWithCursor('yarn &&  pnpm| test')
+        const { partStart: cursor, ...result } = parseCommandStringWithCursor('yarn &&  pnpm| test')
         expect(result?.allParts).toEqual([
             ['pnpm', 9, false],
             ['test', 14, false],
         ])
+    })
+
+    test('No empty parts', () => {
+        const { partStart: cursor, ...result } = parseCommandStringWithCursor('| &&')
+        expect(result?.allParts).toEqual([['', 0, false]])
     })
 
     test('Trim', () => {
@@ -63,19 +78,29 @@ describe('parseCommandString', () => {
         expect(result?.currentPartValue).toBe('--define:')
     })
 
-    testCommandPart('|', '', 0, 0)
-    testCommandPart('yarn && pnpm |test', 'test', 13, 1)
-    testCommandPart('esbuild "test 2.js" --define:yes|', '--define:yes', 20, 2)
-    testCommandPart('esbui|ld "test 2.js" --define:yes ', 'esbuild', 0, 0)
-    testCommandPart('|esbuild "test 2.js" --define:yes', 'esbuild', 0, 0)
-    testCommandPart('esbuild| "test 2.js" --define:yes', 'esbuild', 0, 0)
-    testCommandPart('esbuild "--opt=|value " --define:yes ', '--opt=value ', 8, 1)
-    testCommandPart('esbuild --allow-|overwrite ', '--allow-overwrite', 8, 1)
-    testCommandPart('esbuild "v" --allow-overwrite| ', '--allow-overwrite', 12, 2)
-    testCommandPart('eslint && |', '', 7, 0)
-    testCommandPart('eslint && | &&', '', 7, 0)
-    testCommandPart('eslint && eslint | &&', ' ', 16, 1)
-    testCommandPart('esbuild "v" --allow-overwrite |', ' ', 29, 3)
+    // | - testing cursor position
+    // $ - expected part position
+    testCommandPart('$|', '', 0)
+    testCommandPart('$| some-args', '', 0)
+    testCommandPart('yarn && pnpm $|test', 'test', 1)
+    testCommandPart('esbuild "test 2.js" $--define:yes|', '--define:yes', 2)
+    testCommandPart('$esbui|ld "test 2.js" --define:yes ', 'esbuild', 0)
+    testCommandPart('$|esbuild "test 2.js" --define:yes', 'esbuild', 0)
+    testCommandPart('$esbuild| "test 2.js" --define:yes', 'esbuild', 0)
+    testCommandPart('esbuild test $|', '', 2)
+    testCommandPart('esbuild test $| --test', '', 2)
+    testCommandPart('esbuild $"--opt=|value " --define:yes ', '--opt=value ', 1)
+    testCommandPart('esbuild $--allow-|overwrite ', '--allow-overwrite', 1)
+    testCommandPart('esbuild "v" $--allow-overwrite| ', '--allow-overwrite', 2)
+    testCommandPart('esbuild $" a | b"', ' a  b', 1)
+    testCommandPart('eslint && $|', '', 0)
+    testCommandPart('eslint $|&& yarn', '', 1)
+    testCommandPart('eslint $| && yarn', '', 1)
+    testCommandPart('eslint && $| &&', '', 0)
+    // todo
+    // testCommandPart('eslint &&$|&&', '', 0)
+    testCommandPart('eslint && eslint $| &&', '', 1)
+    testCommandPart('esbuild "v" --allow-overwrite $|', '', 3)
 })
 
 // describe('getDocumentParsedResult', () => {

@@ -1,4 +1,4 @@
-// patched version of shell-quote package to output indexes (offsets) of matches
+// patched version of shell-quote package to include indexes (offsets) of matches
 
 // '<(' is process substitution operator and
 // can be parsed the same as control operator

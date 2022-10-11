@@ -1306,27 +1306,29 @@ const registerUpdateOnFileRename = () => {
     })
 }
 
+// All linting & parsing logic was writting with the following in mind:
+// Each command range can take one line only
 const registerLinter = () => {
-    const diagnosticCollection = languages.createDiagnosticCollection('uniqueUnreleasedFig')
+    const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
     let supportedDocuments = []
     const doLinting = (document: TextDocument) => {
         if (!getExtensionSetting('validate')) {
             diagnosticCollection.set(document.uri, [])
             return
         }
-        const lintTypeToOptionMap: Partial<Record<LintProblemType, string>> = {
+        const lintTypeToSettingMap: Partial<Record<LintProblemType, string>> = {
             commandName: 'commandName',
         }
-        // use delta edit optimizations?
-        const ranges = getAllCommandsLocations(document)
         const allLintProblems: ParseCollectedData['lintProblems'] = []
-        for (const range of ranges) {
+        const lintRanges = getAllCommandLocations(document)
+        for (const range of lintRanges) {
+            if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, range, range.start, collectedData, 'lint')
             const { lintProblems } = collectedData
             allLintProblems.push(
                 ...(lintProblems.filter(({ type }) => {
-                    const controlledSetting = lintTypeToOptionMap[type]
+                    const controlledSetting = lintTypeToSettingMap[type]
                     if (!controlledSetting) return true
                     return getExtensionSetting(`lint.${controlledSetting}`)
                 }) ?? []),
@@ -1343,7 +1345,7 @@ const registerLinter = () => {
             })),
         )
     }
-    const lintEditors = () => {
+    const lintAllVisibleEditors = () => {
         // todo use tabs instead
         supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
         for (const document of supportedDocuments) {
@@ -1352,17 +1354,16 @@ const registerLinter = () => {
     }
     // do parsing & linting after ext host initializing
     setTimeout(() => {
-        lintEditors()
+        lintAllVisibleEditors()
     }, 0)
 
-    window.onDidChangeVisibleTextEditors(lintEditors)
+    window.onDidChangeVisibleTextEditors(lintAllVisibleEditors)
     workspace.onDidChangeTextDocument(({ document }) => {
-        // todo context changes: scripts
         if (!supportedDocuments.includes(document)) return
         doLinting(document)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintEditors()
+        if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
     })
 }
 

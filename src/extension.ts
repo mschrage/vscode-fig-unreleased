@@ -982,6 +982,38 @@ const provideRangeFromDocumentPosition = ({ document, position }: DocumentWithPo
 }
 // #endregion
 
+/**
+ * @param textEdits text change ranges
+ * @param pickPosLineRange if we have existing existing data on that line, offsets needs to be updated
+ */
+const handleDeltaChanges = (
+    document: TextDocument,
+    textEdits: readonly TextDocumentContentChangeEvent[],
+    pickPosLineRange?: (pos: Position) => { response: true; onFailCallback: () => void } | undefined,
+) => {
+    if (!isDocumentSupported(document) || textEdits.length === 0) return
+    const firstEdit = textEdits[0]
+    const firstRange = firstEdit.range
+    if (
+        textEdits.length === 1 &&
+        [firstRange.end.line, document.positionAt(firstEdit.rangeOffset + firstEdit.text.length).line].every(line => line === firstRange.start.line)
+    ) {
+        const pos = firstRange.start
+        const lineRangeExpected = pickPosLineRange?.(pos)
+        if (lineRangeExpected) {
+            const lineRange = getAllInputCommandLocations(document).find(location => location.start.line === pos.line)
+            if (!lineRange) lineRangeExpected.onFailCallback()
+            return lineRange && [lineRange]
+        }
+        const commandRanges = getAllInputCommandLocations(document)
+        return commandRanges.filter(commandRange => commandRange.start.line === pos.line)
+    } else {
+        const commandRanges = getAllInputCommandLocations(document)
+        // return commandRanges?.filter(range => textEdits.some(editRange => editRange.intersection(range)))
+        return commandRanges
+    }
+}
+
 // #region All command locations
 // they return all command locations for requesting file
 const getInputCommandsShellFile = (document: TextDocument) => {
@@ -1311,7 +1343,7 @@ const registerUpdateOnFileRename = () => {
 const registerLinter = () => {
     const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
     let supportedDocuments = []
-    const doLinting = (document: TextDocument) => {
+    const doLinting = (document: TextDocument, inputRanges: null | Range[]) => {
         if (!getExtensionSetting('validate')) {
             diagnosticCollection.set(document.uri, [])
             return
@@ -1320,7 +1352,7 @@ const registerLinter = () => {
             commandName: 'commandName',
         }
         const allLintProblems: ParseCollectedData['lintProblems'] = []
-        const lintRanges = getAllCommandLocations(document)
+        const lintRanges = getAllCommandLocations(document, inputRanges ?? undefined)
         for (const range of lintRanges) {
             if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}
@@ -1334,22 +1366,31 @@ const registerLinter = () => {
                 }) ?? []),
             )
         }
+        console.log(allLintProblems)
+        const newDiagnostics = allLintProblems.map(({ message, range, type }) => ({
+            message,
+            range: new Range(...range),
+            severity: DiagnosticSeverity.Information,
+            source: 'fig',
+            // code
+        }))
         diagnosticCollection.set(
             document.uri,
-            allLintProblems.map(({ message, range, type }) => ({
-                message,
-                range: new Range(...range),
-                severity: DiagnosticSeverity.Information,
-                source: 'fig',
-                // code
-            })),
+            inputRanges
+                ? [
+                      ...newDiagnostics,
+                      ...diagnosticCollection
+                          .get(document.uri)
+                          .filter(({ range }) => !inputRanges.some(inputRange => inputRange.start.line === range.start.line)),
+                  ]
+                : newDiagnostics,
         )
     }
     const lintAllVisibleEditors = () => {
         // todo use tabs instead
         supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
         for (const document of supportedDocuments) {
-            doLinting(document)
+            doLinting(document, null)
         }
     }
     // do parsing & linting after ext host initializing
@@ -1358,9 +1399,27 @@ const registerLinter = () => {
     }, 0)
 
     window.onDidChangeVisibleTextEditors(lintAllVisibleEditors)
-    workspace.onDidChangeTextDocument(({ document }) => {
+    workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
         if (!supportedDocuments.includes(document)) return
-        doLinting(document)
+        const deltaRanges = handleDeltaChanges(document, contentChanges, pos => {
+            const docDiagnostics = diagnosticCollection.get(document.uri)
+            // if we have existing diagnostic in the changed line, always do relint, even if changes were made before command range (e.g. script name change) so we keep diagnostic offsets in sync
+            const hasLineDiagnostics = docDiagnostics.some(({ range }) => range.start.line === pos.line)
+            if (hasLineDiagnostics) {
+                return {
+                    response: true,
+                    // failed to find command range on that line, probably it got deleted
+                    onFailCallback() {
+                        diagnosticCollection.set(
+                            document.uri,
+                            docDiagnostics.filter(({ range }) => range.start.line !== pos.line),
+                        )
+                    },
+                }
+            }
+        })
+        if (!deltaRanges) return
+        doLinting(document, deltaRanges)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
         if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()

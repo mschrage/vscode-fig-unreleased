@@ -446,7 +446,10 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 // #endregion
 
 // #region Simple utils
-const getExtensionSetting = <T = any>(key: string) => workspace.getConfiguration(CONTRIBUTION_PREFIX).get<T>(key)
+const extConfiguration = workspace.getConfiguration(CONTRIBUTION_PREFIX)
+const getExtensionSetting = <T = any>(key: string) => {
+    return extConfiguration.get<T>(key)
+}
 
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
     // todo (easy) parse cd commands
@@ -690,6 +693,7 @@ const fullCommandParse = (
     })
     if (!documentInfo) return
     let { allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
+    /* these requestes are not interested of gathering information of requested position */
     const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'pathParts') as boolean
 
     // avoid using positions to avoid .translate() crashes
@@ -780,7 +784,6 @@ const fullCommandParse = (
     ).entries()) {
         const partIndex = _iteratingPartIndex + 1
         if (partIsOption) {
-            // todo is that right?
             if (partContents === '--') {
                 goingToSuggest.options = false
                 goingToSuggest.subcommands = false
@@ -856,6 +859,7 @@ const fullCommandParse = (
             }
         }
     }
+
     // todo make it easier to see & understand
     if (inspectOnlyAllParts) return
     if (/* !currentPartIsOption */ true) {
@@ -1318,6 +1322,8 @@ const registerLinter = () => {
         }
         const lintTypeToSettingMap: Partial<Record<LintProblemType, string>> = {
             commandName: 'commandName',
+            arg: 'noArgInput',
+            option: 'optionName',
         }
         const allLintProblems: ParseCollectedData['lintProblems'] = []
         const lintRanges = getAllCommandLocations(document)
@@ -1325,24 +1331,33 @@ const registerLinter = () => {
             if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, range, range.start, collectedData, 'lint')
-            const { lintProblems } = collectedData
-            allLintProblems.push(
-                ...(lintProblems.filter(({ type }) => {
-                    const controlledSetting = lintTypeToSettingMap[type]
-                    if (!controlledSetting) return true
-                    return getExtensionSetting(`lint.${controlledSetting}`)
-                }) ?? []),
-            )
+            const { lintProblems = [] } = collectedData
+            allLintProblems.push(...lintProblems)
         }
+        const lintConfiguration = workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint')
         diagnosticCollection.set(
             document.uri,
-            allLintProblems.map(({ message, range, type }) => ({
-                message,
-                range: new Range(...range),
-                severity: DiagnosticSeverity.Information,
-                source: 'fig',
-                // code
-            })),
+            compact(
+                allLintProblems.map(diagnostic => {
+                    const { message, range } = diagnostic
+                    const controlledSettingName = lintTypeToSettingMap[diagnostic.type]
+                    const controlledSettingValue = controlledSettingName && lintConfiguration[controlledSettingName]
+                    if (controlledSettingValue === 'ignore') return
+                    const severitySettingMap = {
+                        information: DiagnosticSeverity.Information,
+                        warning: DiagnosticSeverity.Warning,
+                        error: DiagnosticSeverity.Error,
+                    }
+                    const severity = severitySettingMap[controlledSettingValue] ?? severitySettingMap.information
+                    return {
+                        message,
+                        range: new Range(...range),
+                        severity,
+                        source: 'fig',
+                        // code
+                    }
+                }),
+            ),
         )
     }
     const lintAllVisibleEditors = () => {
@@ -1363,7 +1378,7 @@ const registerLinter = () => {
         doLinting(document)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (['figUnreleased.validate', 'figUnreleased.lint.commandName'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
+        if (['figUnreleased.validate', 'figUnreleased.lint'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
     })
 }
 

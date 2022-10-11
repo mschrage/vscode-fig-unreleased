@@ -52,14 +52,9 @@
                         }
                     }
                 },
-                "figUnreleased.validate": {
+                "figUnreleased.ignoreNonExistingFiles": {
                     "type": "boolean",
-                    "description": "Enable or disable all validation (linting).",
-                    "default": true
-                },
-                "figUnreleased.lint.commandName": {
-                    "type": "boolean",
-                    "default": true
+                    "description": "Wether to provide definitions to non-existing files, might be useful to quickly create files"
                 },
                 "figUnreleased.updatePathsOnFileRename": {
                     "type": "boolean",
@@ -69,6 +64,44 @@
                 "figUnreleased.semanticHighlighting": {
                     "type": "boolean",
                     "default": true
+                },
+                "figUnreleased.validate": {
+                    "type": "boolean",
+                    "description": "Enable or disable all validation (linting).",
+                    "default": true
+                },
+                "figUnreleased.lint.commandName": {
+                    "type": "string",
+                    "scope": "language-overridable",
+                    "enum": [
+                        "ignore",
+                        "information",
+                        "warning",
+                        "error"
+                    ],
+                    "default": "information"
+                },
+                "figUnreleased.lint.noArgInput": {
+                    "type": "string",
+                    "scope": "language-overridable",
+                    "enum": [
+                        "ignore",
+                        "information",
+                        "warning",
+                        "error"
+                    ],
+                    "default": "information"
+                },
+                "figUnreleased.lint.optionName": {
+                    "type": "string",
+                    "scope": "language-overridable",
+                    "enum": [
+                        "ignore",
+                        "information",
+                        "warning",
+                        "error"
+                    ],
+                    "default": "information"
                 }
             }
         }

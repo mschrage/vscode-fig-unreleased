@@ -1,4 +1,4 @@
-import { CompletionItemKind, extensions, workspace } from 'vscode'
+import { CompletionItem, CompletionItemKind, extensions, workspace } from 'vscode'
 
 let useCompletionNiceLook
 
@@ -22,3 +22,5 @@ export const niceLookingCompletion = (extOrName: string, isFolderKind = false, f
         : {
               kind: fallbackKind,
           }
+
+export const getCompletionLabelName = ({ label }: Pick<CompletionItem, 'label'>) => (typeof label === 'string' ? label : label.label)

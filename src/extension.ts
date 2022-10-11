@@ -235,6 +235,7 @@ const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?
         filesList = []
     }
     const isMatch = globFilter && picomatch(globFilter)
+    // todo add .. if not going outside of workspace
     return compact(
         filesList.map(([name, type]): Fig.Suggestion => {
             if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
@@ -677,7 +678,7 @@ const fullCommandParse = (
     _position: Position,
     collectedData: ParseCollectedData,
     // needs cleanup
-    parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'path-parts' | 'semanticHighlight',
+    parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
 ): undefined => {
     // todo
     const knownSpecNames = ALL_LOADED_SPECS.flatMap(({ name }) => ensureArray(name))
@@ -689,7 +690,7 @@ const fullCommandParse = (
     })
     if (!documentInfo) return
     let { allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
-    const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'path-parts') as boolean
+    const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'pathParts') as boolean
 
     // avoid using positions to avoid .translate() crashes
     if (parsingReason !== 'completions') {
@@ -704,17 +705,26 @@ const fullCommandParse = (
     collectedData.currentPartIndex = currentPartIndex
     collectedData.hoverRange = partToRange(currentPartIndex)
     collectedData.lintProblems = []
+    collectedData.filePathParts = []
     collectedData.collectedCompletions = []
     collectedData.collectedCompletionsPromise = []
-    collectedData.filePathParts = []
+    const pushCompletions = (getItems: () => CompletionItem[] | undefined) => {
+        if (parsingReason !== 'completions') return
+        collectedData.collectedCompletions.push(...(getItems() ?? []))
+    }
+    const pushPromiseCompletions = (getItems: () => Promise<CompletionItem[]> | undefined) => {
+        if (parsingReason !== 'completions') return
+        collectedData.collectedCompletionsPromise.push(...([getItems()] ?? []))
+    }
 
     const setSemanticType = (index: number, type: SemanticLegendType) => {
+        if (parsingReason !== 'semanticHighlight') return
         collectedData.partsSemanticTypes!.push([new Range(...partToRange(index)), type])
     }
     setSemanticType(0, 'command')
     // is in command name
     if (currentPartIndex === 0) {
-        collectedData.collectedCompletions = getRootSpecCompletions(documentInfo)
+        pushCompletions(() => getRootSpecCompletions(documentInfo))
         if (parsingReason === 'hover') {
             const spec = getCompletingSpec(documentInfo.specName)
             collectedData.currentSubcommand = spec && getFigSubcommand(spec)
@@ -848,12 +858,10 @@ const fullCommandParse = (
     }
     // todo make it easier to see & understand
     if (inspectOnlyAllParts) return
-    const pushCompletions = (items: CompletionItem[] | undefined) => collectedData.collectedCompletions.push(...(items ?? []))
-    const pushPromiseCompletions = (items: Promise<CompletionItem[]> | undefined) => collectedData.collectedCompletionsPromise.push(...([items] ?? []))
     if (/* !currentPartIsOption */ true) {
         for (const arg of ensureArray(subcommand.args ?? [])) {
             if (!arg.isVariadic && argMetCount !== 0) continue
-            pushPromiseCompletions(figArgToCompletions(arg, documentInfo))
+            pushPromiseCompletions(() => figArgToCompletions(arg, documentInfo))
             changeCollectedDataPath(arg, currentPartIndex)
             if (!currentPartIsOption) collectedData.argSignatureHelp = arg
             // todo is that right? (stopping at first one)
@@ -864,9 +872,9 @@ const fullCommandParse = (
             collectedData.currentSubcommand = subcommands.find(({ name }) => ensureArray(name).includes(currentPartValue))
         }
         if (goingToSuggest.subcommands) {
-            pushCompletions(subcommands && figSubcommandsToVscodeCompletions(subcommands, documentInfo))
+            if (subcommands) pushCompletions(() => figSubcommandsToVscodeCompletions(subcommands, documentInfo))
             if (additionalSuggestions)
-                pushCompletions(
+                pushCompletions(() =>
                     compact(
                         additionalSuggestions.map(suggest =>
                             figSuggestionToCompletion(suggest, { ...documentInfo, kind: CompletionItemKind.Event, sortTextPrepend: 'c' }),
@@ -922,21 +930,21 @@ const fullCommandParse = (
             const completingOption = getSubcommandOption(currentOptionValue[0])
             let { args } = completingOption ?? {}
             // todo
-            if (Array.isArray(args)) args = args[0]
-            if (args) {
-                collectedData.argSignatureHelp = args
-                changeCollectedDataPath(args, currentPartIndex)
-                if (!args.isOptional) {
+            let arg = Array.isArray(args) ? args[0] : args
+            if (arg) {
+                collectedData.argSignatureHelp = arg
+                changeCollectedDataPath(arg, currentPartIndex)
+                if (!arg.isOptional) {
                     // make sure only arg completions are showed
                     // todo r
                     collectedData.collectedCompletions.splice(0, collectedData.collectedCompletions.length)
                     goingToSuggest.options = false
                 }
-                pushPromiseCompletions(figArgToCompletions(args, patchedDocumentInfo))
+                pushPromiseCompletions(() => figArgToCompletions(arg, patchedDocumentInfo))
             }
         }
 
-        if (goingToSuggest.options) pushCompletions(specOptionsToVscodeCompletions(subcommand, patchedDocumentInfo))
+        if (goingToSuggest.options) pushCompletions(() => specOptionsToVscodeCompletions(subcommand, patchedDocumentInfo))
     }
 
     collectedData.collectedCompletionsIncomplete = true
@@ -1234,8 +1242,6 @@ const registerSemanticHighlighting = () => {
                 const ranges = getAllCommandLocations(document)
                 for (const range of ranges) {
                     const collectedData: ParseCollectedData = {}
-                    // too slow! each command parse ~8-15ms
-                    // easy to opt
                     fullCommandParse(document, range, range.start, collectedData, 'semanticHighlight')
                     for (const part of collectedData.partsSemanticTypes ?? []) {
                         builder.push(part[0], tempTokensMap[part[1]])
@@ -1283,7 +1289,7 @@ const registerUpdateOnFileRename = () => {
             if (!ranges) continue
             for (const range of ranges) {
                 const collectedData: ParseCollectedData = {}
-                fullCommandParse(document, range, range.start, collectedData, 'path-parts')
+                fullCommandParse(document, range, range.start, collectedData, 'pathParts')
                 for (const part of collectedData.filePathParts ?? []) {
                     const docCwd = getCwdUri(document)!
                     const renamedFile = renamedFiles.find(({ oldUri }) => oldUri.toString() === Uri.joinPath(docCwd, part[0]).toString())

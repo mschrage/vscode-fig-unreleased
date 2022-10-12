@@ -82,6 +82,7 @@ export const activate = ({}: ExtensionContext) => {
 const globalSettings = {
     insertSpace: 'ifSubcommandOrOptionTakeArguments' as 'off' | 'always' | 'ifSubcommandOrOptionTakeArguments',
     defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
+    autoParameterHints: true,
     scriptTimeout: 5000,
     useFileIcons: true,
 }
@@ -1228,7 +1229,7 @@ const ACCEPT_COMPLETION_COMMAND = `_${CONTRIBUTION_PREFIX}.acceptCompletion`
 const registerCommands = () => {
     commands.registerCommand(ACCEPT_COMPLETION_COMMAND, async ({ cursorRight } = {}) => {
         if (cursorRight) await commands.executeCommand('cursorRight')
-        commands.executeCommand('editor.action.triggerSuggest')
+        if (globalSettings.autoParameterHints) commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
     })
 }
@@ -1237,6 +1238,7 @@ const initSettings = () => {
     const updateGlobalSettings = () => {
         globalSettings.useFileIcons = getExtensionSetting('useFileIcons')
         globalSettings.insertSpace = getExtensionSetting('insertSpace')
+        globalSettings.autoParameterHints = getExtensionSetting('autoParameterHints')
         globalSettings.defaultFilterStrategy = getExtensionSetting('fuzzySearch') ? 'fuzzy' : 'prefix'
     }
     updateGlobalSettings()
@@ -1582,11 +1584,14 @@ const registerLinter = () => {
     // do parsing & linting after ext host initializing
     setTimeout(() => {
         lintAllVisibleEditors()
-    }, 0)
+    })
 
     window.onDidChangeVisibleTextEditors(lintAllVisibleEditors)
-    workspace.onDidChangeTextDocument(({ document }) => {
+    workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
         if (!supportedDocuments.includes(document)) return
+        if (contentChanges.length && contentChanges.every(({ text }) => text === ' ') && globalSettings.autoParameterHints) {
+            commands.executeCommand('editor.action.triggerParameterHints')
+        }
         doLinting(document)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {

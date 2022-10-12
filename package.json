@@ -62,6 +62,11 @@
                     "markdownDescription": "Wether to use fuzzy search, or prefix-only otherwise",
                     "default": true
                 },
+                "figUnreleased.autoParameterHints": {
+                    "type": "boolean",
+                    "markdownDescription": "Automatically trigger parameter hints (aka signature help) after space",
+                    "default": true
+                },
                 "figUnreleased.insertSpace": {
                     "type": "string",
                     "enum": [

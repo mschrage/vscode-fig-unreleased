@@ -57,6 +57,20 @@
                     "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
                     "default": true
                 },
+                "figUnreleased.insertSpace": {
+                    "type": "string",
+                    "enum": [
+                        "off",
+                        "always",
+                        "ifSubcommandOrOptionTakeArguments"
+                    ],
+                    "enumDescriptions": [
+                        "Never insert a space after selecting a suggestion",
+                        "Insert a space after selecting a suggestion that contains a mandatory argument (e.g selecting git clone).",
+                        "Always insert a space after selecting a suggestion"
+                    ],
+                    "default": "ifSubcommandOrOptionTakeArguments"
+                },
                 "figUnreleased.updatePathsOnFileRename": {
                     "type": "boolean",
                     "description": "Auto update file paths in shell files / package.json scripts on file rename",

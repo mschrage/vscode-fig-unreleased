@@ -80,7 +80,7 @@ export const activate = ({}: ExtensionContext) => {
 
 // Will be implemented into vscode settings
 const globalSettings = {
-    insertOnCompletionAccept: 'space' as 'space' | 'disabled',
+    insertSpace: 'ifSubcommandOrOptionTakeArguments' as 'off' | 'always' | 'ifSubcommandOrOptionTakeArguments',
     defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
     scriptTimeout: 5000,
     useFileIcons: true,
@@ -177,7 +177,7 @@ const figBaseSuggestionToVscodeCompletion = (
     const completion = new CompletionItem({ label: displayName || initialName }) as Omit<CompletionItem, 'label'> & { label: CompletionItemLabel }
 
     completion.insertText = insertValue !== undefined ? new SnippetString().appendText(insertValue) : undefined
-    if (completion.insertText) completion.insertText.value = completion.insertText.value.replace('{cursor}', '$1')
+    if (completion.insertText) completion.insertText.value = completion.insertText.value.replace('{cursor\\}', '$1')
     completion.documentation = (description && new MarkdownString(description)) || undefined
     // vscode uses .sort() on completions
     completion.sortText = sortTextPrepend + (100 - priority).toString().padStart(3, '0')
@@ -275,7 +275,7 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
             if (!completion) return
             // todo use the same logic from options
             completion.insertText = nameArr.find(name => name.toLowerCase().includes(currentPartValue.toLowerCase())) ?? nameArr[0]
-            let insertSpace = subcommand.requiresSubcommand /*  && globalSettings.insertOnCompletionAccept === 'space' */
+            let insertSpace = subcommand.requiresSubcommand
             if (!insertSpace) {
                 // todo is that right?
                 if (subcommand.subcommands) insertSpace = true
@@ -285,7 +285,7 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
                     break
                 }
             }
-            if (completion.insertText === undefined && insertSpace) completion.insertText = (completion.label as CompletionItemLabel).label + ' '
+            addInsertSpaceToCompletion(completion, !!insertSpace, info)
             return completion
         }),
     )
@@ -483,10 +483,36 @@ const specOptionsToVscodeCompletions = (subcommand: Fig.Subcommand, documentInfo
     return compact(getNormalizedSpecOptions(subcommand)?.map(option => parseOptionToCompletion(option, documentInfo)) ?? [])
 }
 
-// todo need think: it seems that fig does start-only filtering by default
+const doSuggestFiltering = ({}: { name: string | string[] }) => {}
+
+const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo) => {
+    const { insertSpace } = globalSettings
+    const spaceShouldBeInserted = insertSpace === 'always' || (hasArgs && insertSpace === 'ifSubcommandOrOptionTakeArguments')
+    if (!spaceShouldBeInserted) return
+
+    const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
+    const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
+
+    /** Wether to insert space if insertText is not overriden */
+    const insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
+
+    const { insertText } = completion
+    if (insertSpaceType && (typeof insertText !== 'object' || !insertText.value.includes('$1'))) {
+        if (insertSpaceType === 'single') {
+            if (typeof insertText === 'object') insertText.value += ' '
+            else completion.insertText += ' '
+        }
+        completion.command = {
+            command: ACCEPT_COMPLETION_COMMAND,
+            arguments: [{ cursorRight: insertSpaceType === 'double' }],
+            title: '',
+        }
+    }
+}
+
 // todo hide commands
 const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): CompletionItem | undefined => {
-    let { isRequired, isRepeatable = false, requiresSeparator: seperator = false, dependsOn, exclusiveOn } = option
+    let { args, isRequired, isRepeatable = false, requiresSeparator: seperator = false, dependsOn, exclusiveOn } = option
 
     if (seperator === true) seperator = '='
     if (seperator === false) seperator = ''
@@ -514,27 +540,11 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
           //       .filter(([, index]) => index !== -1)?.[0]?.[0] || option.name[0]
           option.name.find(name => name.toLowerCase().includes(typedOption.toLowerCase())) || option.name[0]
         : option.name
-    let defaultInsertText = insertOption + seperator
 
-    const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
-    const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
+    completion.insertText ??= insertOption + seperator
 
-    const settingInsertSpace = globalSettings.insertOnCompletionAccept === 'space'
-    /** Wether to insert space if insertText is not overriden */
-    let defaultInsertSpace = settingInsertSpace && !nextTwoChars.startsWith(' ')
-    const isInsertTextOverriden = completion.insertText !== undefined
-    const reuseTwoNextSpaces = settingInsertSpace && nextTwoChars === ' '.repeat(2) && !isInsertTextOverriden
-    if (!reuseTwoNextSpaces) defaultInsertSpace ||= Array.isArray(option.args) ? !!option.args.length : !!option.args
-
-    if (seperator.length !== 1 && defaultInsertSpace) defaultInsertText += ' '
-    completion.insertText ??= defaultInsertText
-
-    if (completion.insertText !== getCompletionLabelName(completion) || reuseTwoNextSpaces) {
-        completion.command = {
-            command: ACCEPT_COMPLETION_COMMAND,
-            arguments: [{ cursorRight: reuseTwoNextSpaces }],
-            title: '',
-        }
+    if (!seperator) {
+        addInsertSpaceToCompletion(completion, !!args && ensureArray(args).some(x => !x.isOptional), info)
     }
 
     return completion
@@ -1216,6 +1226,8 @@ const registerCommands = () => {
 const initSettings = () => {
     const updateGlobalSettings = () => {
         globalSettings.useFileIcons = getExtensionSetting('useFileIcons')
+        globalSettings.insertSpace = getExtensionSetting('insertSpace')
+        globalSettings.defaultFilterStrategy = getExtensionSetting('fuzzySearch') ? 'fuzzy' : 'prefix'
     }
     updateGlobalSettings()
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {

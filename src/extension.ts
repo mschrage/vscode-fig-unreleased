@@ -7,6 +7,7 @@ import {
     CompletionItemKind,
     CompletionItemLabel,
     CompletionItemTag,
+    CompletionTriggerKind,
     DiagnosticSeverity,
     Disposable,
     DocumentSelector,
@@ -109,6 +110,7 @@ type CommandsParts = Array<{ parts: CommandPartParseTuple[]; start: number }>
 // todo resolve sorting!
 interface DocumentInfo extends ParseCommandStringResult {
     // used for providing correct editing range
+    includeCached: boolean
     realPos: Position | undefined
     startPos: Position | undefined
     specName: string
@@ -315,6 +317,12 @@ const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: Do
                 : undefined,
             // todo-low
             range: realPos && new Range(realPos.translate(0, -pathLastPart.replace(/^ /, '').length), realPos),
+            shouldBeCached: true,
+        } as CustomCompletionItem)
+    }
+    return completion
+}
+
 const filterSuggestions = (
     suggestions: Fig.Suggestion[],
     word: string,
@@ -449,6 +457,9 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
     const { suggestions, default: defaultValue } = arg
     // todo expect all props, handle type
     if (suggestions) completions.push(...compact(suggestions.map(suggestion => figSuggestionToCompletion(suggestion, documentInfo))))
+    if (!documentInfo.includeCached) {
+        completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
+    }
     completions.push(...(await figGeneratorScriptToCompletions(arg, documentInfo)))
     if (defaultValue) {
         for (const completion of completions) {
@@ -569,9 +580,8 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 // #endregion
 
 // #region Simple utils
-const extConfiguration = workspace.getConfiguration(CONTRIBUTION_PREFIX)
 const getExtensionSetting = <T = any>(key: string) => {
-    return extConfiguration.get<T>(key)
+    return workspace.getConfiguration(CONTRIBUTION_PREFIX).get<T>(key)
 }
 
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
@@ -711,7 +721,7 @@ const getDocumentParsedResult = (
     realPos: Position,
     cursorStringOffset: number,
     startPos: Position,
-    options: { stripCurrentValue: boolean },
+    options: { stripCurrentValue: boolean; includeCached: boolean },
 ): DocumentInfo | undefined => {
     const parseCommandResult = parseCommandString(stringContents, cursorStringOffset, options.stripCurrentValue)
     if (!parseCommandResult) return
@@ -738,6 +748,7 @@ const getDocumentParsedResult = (
         currentPartOffset,
         currentPartIndex,
         allParts,
+        includeCached: options.includeCached,
         currentPartIsOption,
         parsedInfo: {
             completingOptionValue: previousPartIsOptionWithArg
@@ -773,6 +784,8 @@ type LintProblem = {
     message: string
 }
 
+type CustomCompletionItem = CompletionItem & { shouldBeCached?: boolean }
+
 // can also be refactored to try/finally instead, but'd require extra indent
 interface ParseCollectedData {
     argSignatureHelp?: Fig.Arg
@@ -784,8 +797,8 @@ interface ParseCollectedData {
     currentPartIndex?: number
     currentPartRange?: [Position, Position]
 
-    collectedCompletions?: CompletionItem[]
-    collectedCompletionsPromise?: Promise<CompletionItem[]>[]
+    collectedCompletions?: CustomCompletionItem[]
+    collectedCompletionsPromise?: Promise<CustomCompletionItem[]>[]
     collectedCompletionsIncomplete?: boolean
 
     lintProblems?: LintProblem[]
@@ -805,6 +818,7 @@ const fullCommandParse = (
     collectedData: ParseCollectedData,
     // needs cleanup
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
+    { includeCachedCompletion }: { includeCachedCompletion?: boolean } = {},
 ): undefined => {
     // todo
     const knownSpecNames = ALL_LOADED_SPECS.flatMap(({ name }) => ensureArray(name))
@@ -813,6 +827,7 @@ const fullCommandParse = (
     const stringPos = _position.character - startPos.character
     const documentInfo = getDocumentParsedResult(document, inputText, _position, stringPos, startPos, {
         stripCurrentValue: parsingReason === 'completions',
+        includeCached: includeCachedCompletion ?? false,
     })
     if (!documentInfo) return
     let { allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
@@ -1207,17 +1222,33 @@ const registerLanguageProviders = () => {
         ',',
     ]
 
+    const completionsCache: Map<TextDocument, CompletionItem[] | undefined> = new Map()
     languages.registerCompletionItemProvider(
         SUPPORTED_ALL_SELECTOR,
         {
             async provideCompletionItems(document, position, token, context) {
+                let cachedCompletions: CompletionItem[] | undefined
+                if (context.triggerKind === CompletionTriggerKind.TriggerForIncompleteCompletions) {
+                    cachedCompletions = completionsCache.get(document)
+                }
                 const commandRange = provideRangeFromDocumentPosition({ document, position })
                 if (!commandRange) return
                 const collectedData: ParseCollectedData = {}
-                fullCommandParse(document, commandRange, position, collectedData, 'completions')
+                fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeCachedCompletion: !!cachedCompletions })
                 const { collectedCompletions = [], collectedCompletionsPromise = [], collectedCompletionsIncomplete } = collectedData
+                // completionsCache.set(key, value)
                 const completionsFromPromise = await Promise.all(collectedCompletionsPromise)
-                return { items: [...collectedCompletions, ...completionsFromPromise.flat(1)] ?? [], isIncomplete: collectedCompletionsIncomplete }
+                const completions = [...collectedCompletions, ...completionsFromPromise.flat(1)]
+                if (!cachedCompletions) {
+                    completionsCache.set(
+                        document,
+                        completions.filter(({ shouldBeCached }) => shouldBeCached),
+                    )
+                }
+                return {
+                    items: [...completions, ...(cachedCompletions ?? [])],
+                    isIncomplete: collectedCompletionsIncomplete,
+                }
             },
         },
         ...COMPLETION_TRIGGER_CHARACTERS,

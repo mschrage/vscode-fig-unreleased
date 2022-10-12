@@ -483,30 +483,7 @@ const specOptionsToVscodeCompletions = (subcommand: Fig.Subcommand, documentInfo
     return compact(getNormalizedSpecOptions(subcommand)?.map(option => parseOptionToCompletion(option, documentInfo)) ?? [])
 }
 
-const doSuggestFiltering = ({}: { name: string | string[] }) => {}
-
-const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo) => {
-    const { insertSpace } = globalSettings
-    const spaceShouldBeInserted = insertSpace === 'always' || (hasArgs && insertSpace === 'ifSubcommandOrOptionTakeArguments')
-    if (!spaceShouldBeInserted) return
-
-    const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
-    const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
-
-    /** Wether to insert space if insertText is not overriden */
-    const insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
-
-    const { insertText } = completion
-    if (insertSpaceType && (typeof insertText !== 'object' || !insertText.value.includes('$1'))) {
-        if (insertSpaceType === 'single') {
-            if (typeof insertText === 'object') insertText.value += ' '
-            else completion.insertText += ' '
-        }
-        completion.command = {
-            command: ACCEPT_COMPLETION_COMMAND,
-            arguments: [{ cursorRight: insertSpaceType === 'double' }],
-            title: '',
-        }
+const doSuggestFiltering = ({ name }: { name: string | string[] }, { currentPartValue }: DocumentInfo) => {
     }
 }
 
@@ -553,6 +530,30 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 // #endregion
 
 // #region Completion helpers
+const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo) => {
+    const { insertSpace } = globalSettings
+    const spaceShouldBeInserted = insertSpace === 'always' || (hasArgs && insertSpace === 'ifSubcommandOrOptionTakeArguments')
+    if (!spaceShouldBeInserted) return
+
+    const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
+    const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
+
+    const insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
+
+    const { insertText } = completion
+    if (insertSpaceType && (typeof insertText !== 'object' || !insertText.value.includes('$1'))) {
+        if (insertSpaceType === 'single') {
+            if (typeof insertText === 'object') insertText.value += ' '
+            else completion.insertText += ' '
+        }
+        completion.command = {
+            command: ACCEPT_COMPLETION_COMMAND,
+            arguments: [{ cursorRight: insertSpaceType === 'double' }],
+            title: '',
+        }
+    }
+}
+
 // todo to options, introduce flattened lvl
 const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?: string, includeType?: FileType) => {
     const folderPath = stringContents.split('/').slice(0, -1).join('/')

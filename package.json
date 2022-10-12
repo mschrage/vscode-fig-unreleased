@@ -52,6 +52,11 @@
                         }
                     }
                 },
+                "figUnreleased.useFileIcons": {
+                    "type": "boolean",
+                    "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
+                    "default": true
+                },
                 "figUnreleased.ignoreNonExistingFiles": {
                     "type": "boolean",
                     "description": "Wether to provide definitions to non-existing files, might be useful to quickly create files"

@@ -23,7 +23,6 @@ import {
     SemanticTokensLegend,
     SnippetString,
     TextDocument,
-    TextDocumentContentChangeEvent,
     TextEdit,
     Uri,
     window,
@@ -38,6 +37,7 @@ import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
 import { getCompletionLabelName, niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
+import { specGlobalIconMap, stringIconMap } from './customDataMaps'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
 
@@ -63,7 +63,7 @@ export const activate = ({}: ExtensionContext) => {
     registerSemanticHighlighting()
     registerUpdateOnFileRename()
     registerLinter()
-    // todo impl setting
+    initSettings()
 
     const api: API = {
         /** let other extensions contribute/extend with their completions */
@@ -82,6 +82,7 @@ const globalSettings = {
     insertOnCompletionAccept: 'space' as 'space' | 'disabled',
     defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
     scriptTimeout: 5000,
+    useFileIcons: true,
 }
 
 // #region Constants
@@ -89,25 +90,14 @@ const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript']
 const SUPPORTED_PACKAGE_JSON_SELECTOR: DocumentSelector = { pattern: '**/package.json', scheme: '*' }
 const SUPPORTED_ALL_SELECTOR: DocumentSelector = [...SUPPORTED_SHELL_SELECTOR, SUPPORTED_PACKAGE_JSON_SELECTOR]
 
-/** this commands (specs) come from npm packages
- * they should be probably installed locally */
+/**
+ * these specs come from npm packages
+ * they should be probably installed locally
+ */
 const FIG_PACKAGES_COMMANDS = ['eslint', 'electron', 'dotenv', 'esbuild', 'webpack', 'jest', 'vite', 'pre-commit', 'rollup', 'vue', 'ts-node', 'tsc']
 // probably vsce, vercel, volta, turbo, serve
 // todo other for package.json: suggest only installed clis, try to ban macos-only
 // #endregion
-
-// Temporary maps
-// todo remove temp for all, introduce placeholders
-const niceIconMap = {
-    // experimentally set all options of the spec to icon file
-    esbuild: 'esbuild.js',
-}
-
-const stableIconMap = {
-    'fig://icon?type=yarn': 'yarn.lock',
-    'fig://icon?type=npm': 'package.json',
-    'ffig://icon?type=git': '.gitkeep',
-}
 
 // I included regions, so you can easily collapse categories.
 
@@ -143,6 +133,7 @@ interface DocumentInfo extends ParseCommandStringResult {
 
 // todo review options mb add them to base
 type DocumentInfoForCompl = DocumentInfo & {
+    /** Fallback icon */
     kind?: CompletionItemKind
     sortTextPrepend?: string
     specName?: string
@@ -175,12 +166,13 @@ const figBaseSuggestionToVscodeCompletion = (
         startPos,
         specName,
         rangeShouldReplace = true,
-    }: DocumentInfoForCompl & { sortTextPrepend: string },
+        assignGlobalCompletionIcon,
+    }: DocumentInfoForCompl & { sortTextPrepend: string; assignGlobalCompletionIcon?: boolean },
 ): CompletionItem | undefined => {
     const { displayName, insertValue, description, icon, priority = 50, hidden, deprecated } = baseCompetion
 
     if (hidden && currentPartValue !== initialName) return undefined
-    const completion = new CompletionItem({ label: displayName || initialName })
+    const completion = new CompletionItem({ label: displayName || initialName }) as Omit<CompletionItem, 'label'> & { label: CompletionItemLabel }
 
     completion.insertText = insertValue !== undefined ? new SnippetString().appendText(insertValue) : undefined
     if (completion.insertText) completion.insertText.value = completion.insertText.value.replace('{cursor}', '$1')
@@ -199,14 +191,12 @@ const figBaseSuggestionToVscodeCompletion = (
         completion.range = new Range(curStartPos, rangeShouldReplace ? curEndPos : realPos)
     }
 
-    if (specName && kind === undefined) {
-        const niceLookingIcon = niceIconMap[specName]
-        if (niceLookingIcon) Object.assign(completion, niceLookingCompletion(niceLookingIcon))
+    if (globalSettings.useFileIcons) {
+        let fileIcon: string | void = icon && stringIconMap[icon]
+        fileIcon ??= assignGlobalCompletionIcon ? getGlobalCompletionIcon(specName) : undefined
+        if (fileIcon) Object.assign(completion, niceLookingCompletion(fileIcon))
     }
-    if (icon) {
-        const mappedIcon = stableIconMap[icon]
-        if (mappedIcon) Object.assign(completion, niceLookingCompletion(mappedIcon))
-    }
+    // else if (icon && [...icon].length === 1) completion.label.label = `${icon} ${completion.label.label}`
 
     return completion
 }
@@ -218,35 +208,15 @@ const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepen
             // todo display both?
             if (Array.isArray(name)) name = name[0]
             if (includeOnlyList && !includeOnlyList.includes(name)) return
-            const completion = figBaseSuggestionToVscodeCompletion(specCommand, name, { ...info, sortTextPrepend: '' })
+            const completion = figBaseSuggestionToVscodeCompletion(specCommand, name, {
+                ...info,
+                specName: name,
+                sortTextPrepend: '',
+                assignGlobalCompletionIcon: true,
+            })
             if (!completion) return
-            Object.assign(completion, niceLookingCompletion('.sh'))
+            if (!completion.kind) Object.assign(completion, niceLookingCompletion('.sh'))
             return completion
-        }),
-    )
-}
-
-// todo to options, introduce flattened lvl
-const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?: string, includeType?: FileType) => {
-    const folderPath = stringContents.split('/').slice(0, -1).join('/')
-    let filesList: [name: string, type: FileType][]
-    try {
-        filesList = await workspace.fs.readDirectory(Uri.joinPath(cwd, folderPath))
-    } catch {
-        filesList = []
-    }
-    const isMatch = globFilter && picomatch(globFilter)
-    // todo add .. if not going outside of workspace
-    return compact(
-        filesList.map(([name, type]): Fig.Suggestion => {
-            if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
-            const isDir = type & FileType.Directory
-            return {
-                name: isDir ? `${name}/` : name,
-                type: isDir ? 'folder' : 'file',
-                // display by default folders above files to align with default explorer look
-                priority: isDir ? 71 : 70,
-            }
         }),
     )
 }
@@ -514,7 +484,7 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
     if (exclusiveOn?.some(name => usedOptionsNames.includes(name))) return
 
     const optionsRender = currentOptionsArr.join(', ')
-    const completion = figBaseSuggestionToVscodeCompletion(option, optionsRender, { ...info, sortTextPrepend: 'd' })
+    const completion = figBaseSuggestionToVscodeCompletion(option, optionsRender, { ...info, sortTextPrepend: 'd', assignGlobalCompletionIcon: true })
     if (!completion) return
     ;(completion.label as CompletionItemLabel).detail = isRequired ? 'REQUIRED' : getArgPreviewFromOption(option)
 
@@ -555,6 +525,37 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 // #endregion
 
 // #region Completion helpers
+// todo to options, introduce flattened lvl
+const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?: string, includeType?: FileType) => {
+    const folderPath = stringContents.split('/').slice(0, -1).join('/')
+    let filesList: [name: string, type: FileType][]
+    try {
+        filesList = await workspace.fs.readDirectory(Uri.joinPath(cwd, folderPath))
+    } catch {
+        filesList = []
+    }
+    const isMatch = globFilter && picomatch(globFilter)
+    // todo add .. if not going outside of workspace
+    return compact(
+        filesList.map(([name, type]): Fig.Suggestion => {
+            if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
+            const isDir = type & FileType.Directory
+            return {
+                name: isDir ? `${name}/` : name,
+                type: isDir ? 'folder' : 'file',
+                // display by default folders above files to align with default explorer look
+                priority: isDir ? 71 : 70,
+            }
+        }),
+    )
+}
+
+const getGlobalCompletionIcon = (specName: string) => {
+    const templateName = Object.entries(specGlobalIconMap).find(([, specs]) => specs.includes(specName))?.[0]
+    if (!templateName) return
+    return templateName.replaceAll('{name}', specName)
+}
+
 const getArgPreviewFromOption = ({ args }: Fig.Option) => {
     const argsPreview =
         args &&
@@ -1178,6 +1179,16 @@ const registerCommands = () => {
         if (cursorRight) await commands.executeCommand('cursorRight')
         commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
+    })
+}
+
+const initSettings = () => {
+    const updateGlobalSettings = () => {
+        globalSettings.useFileIcons = getExtensionSetting('useFileIcons')
+    }
+    updateGlobalSettings()
+    workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
+        if (affectsConfiguration(CONTRIBUTION_PREFIX)) updateGlobalSettings()
     })
 }
 

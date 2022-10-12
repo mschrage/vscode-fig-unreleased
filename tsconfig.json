@@ -15,7 +15,8 @@
             "WebWorker"
         ],
         "strict": false,
-        "noImplicitReturns": false
+        "noImplicitReturns": false,
+        "types": []
     },
     "include": [
         "src"

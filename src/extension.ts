@@ -105,7 +105,7 @@ const FIG_PACKAGES_COMMANDS = ['eslint', 'electron', 'dotenv', 'esbuild', 'webpa
 // #region types
 type CommandPartTuple = [contents: string, offset: number, isOption: boolean]
 type CommandPartParseTuple = [contents: string, offset: number]
-type CommandsParts = Array<{ parts: CommandPartParseTuple[]; start: number }>
+type CommandsParts = Array<{ parts: CommandPartParseTuple[]; start: number; op: string }>
 
 // todo resolve sorting!
 interface DocumentInfo extends ParseCommandStringResult {
@@ -647,17 +647,18 @@ const commandPartIsOption = (contents: string | undefined): boolean => contents?
 
 const getAllCommandsFromString = (inputString: string) => {
     const commandsParts = (parse(inputString) as any[]).reduce<CommandsParts>(
-        (prev, parsedPart: CommandPartParseTuple | { op: string; index: number }, i) => {
+        (prev, parsedPart: CommandPartParseTuple | { op: string; index: number }) => {
             if (Array.isArray(parsedPart)) {
                 const last = prev.slice(-1)[0]!.parts
                 last.push(parsedPart)
             } else {
                 // op end position, it introduces start of new command
-                prev.push({ parts: [], start: parsedPart.index + parsedPart.op.length })
+                prev.push({ parts: [], start: parsedPart.index + parsedPart.op.length, op: parsedPart.op })
             }
             return prev
         },
-        [{ parts: [], start: 0 }],
+        // todo(codebase) investigate typing compl
+        [{ parts: [], start: 0, op: '' }],
     )
     return commandsParts
 }
@@ -671,6 +672,11 @@ interface ParseCommandStringResult {
     currentPartIndex: number
 }
 
+const getIsPartShouldBeIgnored = ({ op }: CommandsParts[number]) => {
+    const isRedirectPart = ['<', '>'].some(x => op.includes(x))
+    return isRedirectPart
+}
+
 // todo parserDirectives
 export const parseCommandString = (inputString: string, stringPos: number, stripCurrentValue: boolean): ParseCommandStringResult | undefined => {
     const allCommandsFromString = getAllCommandsFromString(inputString)
@@ -682,6 +688,8 @@ export const parseCommandString = (inputString: string, stringPos: number, strip
             break
         }
     }
+    // todo provide file definition links
+    if (getIsPartShouldBeIgnored(currentCommandParts)) return
     // needs currentCommandPartEnd
     let currentPartIndex = -1
     let currentPartOffset = 0
@@ -1170,17 +1178,15 @@ const getAllInputCommandLocations = (document: TextDocument) => {
 const getAllCommandLocations = (document: TextDocument, inputRanges = getAllInputCommandLocations(document)) => {
     const outputRanges: Range[] = []
     for (const range of inputRanges ?? []) {
-        const allCommands = getAllCommandsFromString(document.getText(range))
+        const allCommands = getAllCommandsFromString(document.getText(range)).filter(part => !getIsPartShouldBeIgnored(part))
         const stringStartPos = range.start
         outputRanges.push(
             ...compact(
                 allCommands.map(({ parts, start }, i) => {
                     const firstPart = parts[0]
                     if (!firstPart) return
-                    const [, startOffset] = firstPart
                     const [lastContents, endOffset] = parts.at(-1)!
-                    // hack for selection provider
-                    const startPos = stringStartPos.translate(0, i ? startOffset : start)
+                    const startPos = stringStartPos.translate(0, start)
                     return new Range(startPos, stringStartPos.translate(0, endOffset + lastContents.length))
                 }),
             ),

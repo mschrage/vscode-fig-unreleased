@@ -81,7 +81,12 @@ describe('parseCommandString', () => {
         ])
     })
 
-    test('Trim', () => {
+    test('Nothing when in redirect part', () => {
+        const { partStart: cursor, ...result } = parseCommandStringWithCursor('cat hello >> SomeFile|.txt')
+        expect(result).toEqual({})
+    })
+
+    test('Trim option', () => {
         const result = parseCommandStringWithCursor('esbuild "test 2.js" --define:|yes', true)
         expect(result?.currentPartValue).toBe('--define:')
     })

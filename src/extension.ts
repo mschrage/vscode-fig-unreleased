@@ -372,11 +372,16 @@ const figGeneratorScriptToCompletions = async (
             const newExec = exec(commandToExecute, { cwd: cwdPath })
             return {
                 exec: newExec.child,
-                execPromise: newExec,
+                out: newExec.then(
+                    ({ stdout }) => stdout,
+                    () => '',
+                ),
             }
         } catch (err) {
             // align with fig behavior
-            return ''
+            return {
+                out: '',
+            }
         }
     }
     generators = ensureArray(generators)
@@ -391,8 +396,7 @@ const figGeneratorScriptToCompletions = async (
                     tokensBeforePosition,
                     async command => {
                         const res = executeShellCommandShared(command)
-                        if (typeof res === 'string') return res
-                        return (await res.execPromise).stdout
+                        return await res.out
                     },
                     {
                         currentProcess: '',
@@ -415,9 +419,8 @@ const figGeneratorScriptToCompletions = async (
                 const out = await Promise.race<string>([
                     (async (): Promise<string> => {
                         const result = executeShellCommandShared(script as string)
-                        if (typeof result === 'string') return result
                         currentExec = result.exec
-                        return (await result.execPromise).stdout
+                        return await result.out
                     })(),
                     new Promise(resolve => {
                         setTimeout(() => {

@@ -301,6 +301,7 @@ const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: Do
         sortTextPrepend: 'a',
         ...info,
     })
+    if (!completion) return
     if (oneOf(suggestion.type, 'folder', 'file')) {
         const isDir = suggestion.type === 'folder'
         const { currentPartValue, realPos } = info
@@ -330,7 +331,7 @@ const filterSuggestions = (
 ) => {
     const filterFn = (name: string) => name[filterStrategy === 'fuzzy' ? 'includes' : 'startsWith'](word)
     // todo also return that matched name
-    return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name)))
+    return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name!)))
 }
 
 let suggestionsCache:
@@ -348,7 +349,7 @@ const figGeneratorScriptToCompletions = async (
     info: DocumentInfo,
 ) => {
     if (debounce) return
-    const getStartOffset = () => info._document.offsetAt(info.startPos)
+    const getStartOffset = () => info._document.offsetAt(info.startPos!)
     const { currentPartIndex, currentPartValue, allParts } = info
     if (suggestionsCache) {
         const { document, commandStartOffset, allTokensExceptCurrent } = suggestionsCache
@@ -361,7 +362,8 @@ const figGeneratorScriptToCompletions = async (
         }
     }
     let collectedSuggestions: Fig.Suggestion[] = []
-    const cwdPath = getCwdUri(info._document).fsPath
+    const cwdPath = getCwdUri(info._document)?.fsPath
+    if (!cwdPath) return
     const executeShellCommandShared = (commandToExecute: string) => {
         try {
             const util = require('util') as typeof import('util')
@@ -401,11 +403,11 @@ const figGeneratorScriptToCompletions = async (
                 const queryTerm =
                     typeof getQueryTerm === 'string'
                         ? getQueryTerm
-                        : getQueryTerm(
+                        : getQueryTerm?.(
                               // todo pass pass that after requiresSeparator
                               currentPartValue,
                           )
-                collectedSuggestions.push(...filterSuggestions(customSuggestions, queryTerm, { filterStrategy }))
+                collectedSuggestions.push(...(queryTerm ? filterSuggestions(customSuggestions, queryTerm, { filterStrategy }) : customSuggestions))
             }
             if (script) {
                 script = typeof script === 'function' ? script(tokensBeforePosition) : script
@@ -424,20 +426,22 @@ const figGeneratorScriptToCompletions = async (
                         }, scriptTimeout ?? globalSettings.scriptTimeout)
                     }),
                 ])
+                if (!postProcess && !splitOn) throw new Error(`Invalid ${info.specName} generator: either postProcess or splitOn must be defined`)
                 const suggestions = splitOn
                     ? out
                           .split(splitOn)
                           // todo1
                           .filter(Boolean)
                           .map((name): Fig.Suggestion => ({ name }))
-                    : postProcess(out, tokensBeforePosition)
+                    : postProcess!(out, tokensBeforePosition)
                 collectedSuggestions.push(...suggestions)
             }
             // suggestionsCache = {}
         }
     }
-    return collectedSuggestions.map((suggestion): CustomCompletionItem => {
+    return collectedSuggestions.map((suggestion): CustomCompletionItem | undefined => {
         const completion = figSuggestionToCompletion(suggestion, info)
+        if (!completion) return
         // todo set to current pos?
         completion.range = undefined
         return completion
@@ -445,7 +449,7 @@ const figGeneratorScriptToCompletions = async (
 }
 
 const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => {
-    const completions: CompletionItem[] = []
+    const completions: (CompletionItem | undefined)[] = []
     // does it make sense to support it here?
     if (arg.suggestCurrentToken)
         completions.push({
@@ -460,15 +464,15 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
     if (!documentInfo.includeCached) {
         completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
     }
-    completions.push(...(await figGeneratorScriptToCompletions(arg, documentInfo)))
+    completions.push(...((await figGeneratorScriptToCompletions(arg, documentInfo)) ?? []))
     if (defaultValue) {
         for (const completion of completions) {
-            if (typeof completion.label !== 'object') continue
+            if (typeof completion?.label !== 'object') continue
             // todo comp name?
             if (completion.label.label === defaultValue) completion.label.description = 'DEFAULT'
         }
     }
-    return completions
+    return compact(completions)
 }
 
 // imo specOptions is more memorizable rather than commandOptions
@@ -548,7 +552,7 @@ const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?
     const isMatch = globFilter && picomatch(globFilter)
     // todo add .. if not going outside of workspace
     return compact(
-        filesList.map(([name, type]): Fig.Suggestion => {
+        filesList.map(([name, type]): Fig.Suggestion | undefined => {
             if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
             const isDir = type & FileType.Directory
             return {
@@ -581,7 +585,7 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 
 // #region Simple utils
 const getExtensionSetting = <T = any>(key: string) => {
-    return workspace.getConfiguration(CONTRIBUTION_PREFIX).get<T>(key)
+    return workspace.getConfiguration(CONTRIBUTION_PREFIX).get(key) as T
 }
 
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
@@ -670,7 +674,7 @@ interface ParseCommandStringResult {
 // todo parserDirectives
 export const parseCommandString = (inputString: string, stringPos: number, stripCurrentValue: boolean): ParseCommandStringResult | undefined => {
     const allCommandsFromString = getAllCommandsFromString(inputString)
-    let currentCommandParts: CommandsParts[number] | undefined
+    let currentCommandParts!: CommandsParts[number]
     for (const commandParts of allCommandsFromString) {
         if (commandParts.start <= stringPos) {
             currentCommandParts = commandParts
@@ -852,11 +856,13 @@ const fullCommandParse = (
     collectedData.collectedCompletionsPromise = []
     const pushCompletions = (getItems: () => CompletionItem[] | undefined) => {
         if (parsingReason !== 'completions') return
-        collectedData.collectedCompletions.push(...(getItems() ?? []))
+        collectedData.collectedCompletions!.push(...(getItems() ?? []))
     }
     const pushPromiseCompletions = (getItems: () => Promise<CompletionItem[]> | undefined) => {
         if (parsingReason !== 'completions') return
-        collectedData.collectedCompletionsPromise.push(...([getItems()] ?? []))
+        const items = getItems()
+        if (!items) return
+        collectedData.collectedCompletionsPromise!.push(items)
     }
 
     const setSemanticType = (index: number, type: SemanticLegendType) => {
@@ -895,11 +901,12 @@ const fullCommandParse = (
         // todo duplication
         collectedData.currentFilePathPart = getIsPathPart(arg) ? [...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(i)))] : undefined
     }
-    const addPossiblyPathPart = (i: number, args: Fig.Arg[] | Fig.Arg) => {
+    const addPossiblyPathPart = (i: number, args: Fig.Arg[] | Fig.Arg | undefined) => {
+        if (!args) return
         const isPathPart = ensureArray(args).some(arg => getIsPathPart(arg))
         if (!isPathPart) return
         const part = allParts[i]
-        collectedData.filePathParts.push([...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(i)))])
+        collectedData.filePathParts!.push([...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(i)))])
     }
 
     const { completingOptionValue: completingParamValue, completingOptionFull } = documentInfo.parsedInfo
@@ -969,7 +976,7 @@ const fullCommandParse = (
                 argMetCount = 0
             } else if (allParts[partIndex - 1][2] && getSubcommandOption(allParts[partIndex - 1][0])?.args) {
                 setSemanticType(partIndex, 'option-arg')
-                addPossiblyPathPart(partIndex, getSubcommandOption(allParts[partIndex - 1][0]).args)
+                addPossiblyPathPart(partIndex, getSubcommandOption(allParts[partIndex - 1][0])?.args)
             } else if (subcommand.args) {
                 setSemanticType(partIndex, 'arg')
                 addPossiblyPathPart(partIndex, subcommand.args)
@@ -1082,7 +1089,7 @@ const fullCommandParse = (
                     collectedData.collectedCompletions.splice(0, collectedData.collectedCompletions.length)
                     goingToSuggest.options = false
                 }
-                pushPromiseCompletions(() => figArgToCompletions(arg, patchedDocumentInfo))
+                pushPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo))
             }
         }
 
@@ -1171,7 +1178,7 @@ const getAllCommandLocations = (document: TextDocument, inputRanges = getAllInpu
                     const firstPart = parts[0]
                     if (!firstPart) return
                     const [, startOffset] = firstPart
-                    const [lastContents, endOffset] = parts.at(-1)
+                    const [lastContents, endOffset] = parts.at(-1)!
                     // hack for selection provider
                     const startPos = stringStartPos.translate(0, i ? startOffset : start)
                     return new Range(startPos, stringStartPos.translate(0, endOffset + lastContents.length))
@@ -1315,6 +1322,7 @@ const registerLanguageProviders = () => {
         let { currentFilePathPart } = collectedData
         if (!currentFilePathPart) return
         const uri = pathStringToUri(document, currentFilePathPart[0])
+        if (!uri) return
         return {
             range: currentFilePathPart[3],
             contents: currentFilePathPart[0],
@@ -1355,7 +1363,7 @@ const registerLanguageProviders = () => {
             const { range, uri, fileExists } = getFilePathPart({ document, position }, true) ?? {}
             if (!uri || !(await fileExists)) return
             const edit = new WorkspaceEdit()
-            edit.set(document.uri, [{ range, newText: newName }])
+            edit.set(document.uri, [{ range: range!, newText: newName }])
             edit.renameFile(uri, Uri.joinPath(getCwdUri({ uri })!, newName))
             return edit
         },
@@ -1487,7 +1495,7 @@ const registerUpdateOnFileRename = () => {
 // Each command range can take one line only
 const registerLinter = () => {
     const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
-    let supportedDocuments = []
+    let supportedDocuments: TextDocument[] = []
     const doLinting = (document: TextDocument) => {
         if (!getExtensionSetting('validate')) {
             diagnosticCollection.set(document.uri, [])
@@ -1507,7 +1515,7 @@ const registerLinter = () => {
             const { lintProblems = [] } = collectedData
             allLintProblems.push(...lintProblems)
         }
-        const lintConfiguration = workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint')
+        const lintConfiguration: Record<string, string> = workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint') ?? {}
         diagnosticCollection.set(
             document.uri,
             compact(
@@ -1521,7 +1529,7 @@ const registerLinter = () => {
                         warning: DiagnosticSeverity.Warning,
                         error: DiagnosticSeverity.Error,
                     }
-                    const severity = severitySettingMap[controlledSettingValue] ?? severitySettingMap.information
+                    const severity = severitySettingMap[controlledSettingValue ?? ''] ?? severitySettingMap.information
                     return {
                         message,
                         range: new Range(...range),

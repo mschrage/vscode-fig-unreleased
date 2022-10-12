@@ -1193,6 +1193,20 @@ const initSettings = () => {
 }
 
 const registerLanguageProviders = () => {
+    const COMPLETION_TRIGGER_CHARACTERS = [
+        ' ',
+        '-',
+        // file path
+        '/',
+        // file ext
+        '.',
+        // common option separators
+        '=',
+        ':',
+        // common delimiter between values in option arg generators
+        ',',
+    ]
+
     languages.registerCompletionItemProvider(
         SUPPORTED_ALL_SELECTOR,
         {
@@ -1206,12 +1220,7 @@ const registerLanguageProviders = () => {
                 return { items: [...collectedCompletions, ...completionsFromPromise.flat(1)] ?? [], isIncomplete: collectedCompletionsIncomplete }
             },
         },
-        ' ',
-        '-',
-        // file path
-        '/',
-        // file ext
-        '.',
+        ...COMPLETION_TRIGGER_CHARACTERS,
     )
 
     languages.registerSignatureHelpProvider(SUPPORTED_ALL_SELECTOR, {

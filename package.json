@@ -57,10 +57,6 @@
                     "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
                     "default": true
                 },
-                "figUnreleased.ignoreNonExistingFiles": {
-                    "type": "boolean",
-                    "description": "Wether to provide definitions to non-existing files, might be useful to quickly create files"
-                },
                 "figUnreleased.updatePathsOnFileRename": {
                     "type": "boolean",
                     "description": "Auto update file paths in shell files / package.json scripts on file rename",

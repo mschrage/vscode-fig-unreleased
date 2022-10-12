@@ -37,7 +37,7 @@ import _ from 'lodash'
 import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
-import { getCompletionLabelName, niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
+import { niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
@@ -206,6 +206,7 @@ const figBaseSuggestionToVscodeCompletion = (
 const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepend'>, includeOnlyList?: string[]) => {
     return compact(
         ALL_LOADED_SPECS.map(specCommand => {
+            if (!doSuggestFiltering(specCommand, info)) return
             let { name } = specCommand
             // todo display both?
             if (Array.isArray(name)) name = name[0]
@@ -266,6 +267,7 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
     const { currentPartValue = '' } = info
     return compact(
         subcommands.map(subcommand => {
+            if (!doSuggestFiltering(subcommand, info)) return
             const nameArr = ensureArray(subcommand.name)
             const completion = figBaseSuggestionToVscodeCompletion(subcommand, nameArr.join(', '), {
                 ...info,
@@ -291,11 +293,12 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
     )
 }
 
-const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: DocumentInfoForCompl) => {
+const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: DocumentInfoForCompl, { filter = true } = {}) => {
     if (typeof suggestion === 'string')
         suggestion = {
             name: suggestion,
         }
+    if (filter && !doSuggestFiltering(suggestion as { name: string }, info)) return
     const completion = figBaseSuggestionToVscodeCompletion(suggestion, ensureArray(suggestion.name)[0]!, {
         kind: CompletionItemKind.Constant,
         sortTextPrepend: 'a',
@@ -411,7 +414,7 @@ const figGeneratorScriptToCompletions = async (
                               // todo pass pass that after requiresSeparator
                               currentPartValue,
                           )
-                collectedSuggestions.push(...(queryTerm ? filterSuggestions(customSuggestions, queryTerm, { filterStrategy }) : customSuggestions))
+                collectedSuggestions.push(...filterSuggestions(customSuggestions, queryTerm || currentPartValue, { filterStrategy }))
             }
             if (script) {
                 script = typeof script === 'function' ? script(tokensBeforePosition) : script
@@ -443,7 +446,7 @@ const figGeneratorScriptToCompletions = async (
         }
     }
     return collectedSuggestions.map((suggestion): CustomCompletionItem | undefined => {
-        const completion = figSuggestionToCompletion(suggestion, info)
+        const completion = figSuggestionToCompletion(suggestion, info, { filter: false })
         if (!completion) return
         // todo set to current pos?
         completion.range = undefined
@@ -451,6 +454,7 @@ const figGeneratorScriptToCompletions = async (
     })
 }
 
+// option or subcommand arg
 const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => {
     const completions: (CompletionItem | undefined)[] = []
     // does it make sense to support it here?
@@ -483,12 +487,9 @@ const specOptionsToVscodeCompletions = (subcommand: Fig.Subcommand, documentInfo
     return compact(getNormalizedSpecOptions(subcommand)?.map(option => parseOptionToCompletion(option, documentInfo)) ?? [])
 }
 
-const doSuggestFiltering = ({ name }: { name: string | string[] }, { currentPartValue }: DocumentInfo) => {
-    }
-}
-
 // todo hide commands
 const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): CompletionItem | undefined => {
+    if (!doSuggestFiltering(option, info)) return
     let { args, isRequired, isRepeatable = false, requiresSeparator: seperator = false, dependsOn, exclusiveOn } = option
 
     if (seperator === true) seperator = '='
@@ -530,6 +531,14 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 // #endregion
 
 // #region Completion helpers
+const doSuggestFiltering = ({ name }: { name: string | string[] }, { currentPartValue }: DocumentInfo) => {
+    if (globalSettings.defaultFilterStrategy === 'fuzzy') {
+        // let vscode handle the sorting, it knows how to do that
+        return true
+    }
+    return ensureArray(name).some(x => x.startsWith(currentPartValue))
+}
+
 const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo) => {
     const { insertSpace } = globalSettings
     const spaceShouldBeInserted = insertSpace === 'always' || (hasArgs && insertSpace === 'ifSubcommandOrOptionTakeArguments')

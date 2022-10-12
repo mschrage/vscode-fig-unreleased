@@ -57,6 +57,11 @@
                     "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
                     "default": true
                 },
+                "figUnreleased.fuzzySearch": {
+                    "type": "boolean",
+                    "markdownDescription": "Wether to use fuzzy search, or prefix-only otherwise",
+                    "default": true
+                },
                 "figUnreleased.insertSpace": {
                     "type": "string",
                     "enum": [

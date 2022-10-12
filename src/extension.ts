@@ -80,7 +80,8 @@ export const activate = ({}: ExtensionContext) => {
 // Will be implemented into vscode settings
 const globalSettings = {
     insertOnCompletionAccept: 'space' as 'space' | 'disabled',
-    // clickPathAction: 'revealInExplorer' | 'openInEditor'
+    defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
+    scriptTimeout: 5000,
 }
 
 // #region Constants
@@ -344,20 +345,141 @@ const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: Do
                 : undefined,
             // todo-low
             range: realPos && new Range(realPos.translate(0, -pathLastPart.replace(/^ /, '').length), realPos),
-        } as CompletionItem)
+const filterSuggestions = (
+    suggestions: Fig.Suggestion[],
+    word: string,
+    { filterStrategy = globalSettings.defaultFilterStrategy }: Pick<Fig.Arg, 'filterStrategy'>,
+) => {
+    const filterFn = (name: string) => name[filterStrategy === 'fuzzy' ? 'includes' : 'startsWith'](word)
+    // todo also return that matched name
+    return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name)))
+}
+
+let suggestionsCache:
+    | {
+          document: TextDocument
+          commandStartOffset: number
+          allTokensExceptCurrent: string[]
+          oldToken: string
+          // suggestions:
+      }
+    | undefined
+
+const figGeneratorScriptToCompletions = async (
+    { generators = [], debounce, filterStrategy }: Pick<Fig.Arg, 'debounce' | 'generators' | 'filterStrategy'>,
+    info: DocumentInfo,
+) => {
+    if (debounce) return
+    const getStartOffset = () => info._document.offsetAt(info.startPos)
+    const { currentPartIndex, currentPartValue, allParts } = info
+    if (suggestionsCache) {
+        const { document, commandStartOffset, allTokensExceptCurrent } = suggestionsCache
+        if (
+            document !== info._document ||
+            commandStartOffset !== getStartOffset() ||
+            !allParts.filter((_, i) => i !== currentPartIndex).every(([token], i) => allTokensExceptCurrent[i] === token)
+        ) {
+            suggestionsCache = undefined
+        }
     }
-    return completion
+    let collectedSuggestions: Fig.Suggestion[] = []
+    const cwdPath = getCwdUri(info._document).fsPath
+    const executeShellCommandShared = (commandToExecute: string) => {
+        try {
+            const util = require('util') as typeof import('util')
+            const child_process = require('child_process') as typeof import('child_process')
+            const exec = util.promisify(child_process.exec)
+            const newExec = exec(commandToExecute, { cwd: cwdPath })
+            return {
+                exec: newExec.child,
+                execPromise: newExec,
+            }
+        } catch (err) {
+            // align with fig behavior
+            return ''
+        }
+    }
+    generators = ensureArray(generators)
+    // todo use promise.all
+    for (let { script, scriptTimeout, postProcess, splitOn, custom, trigger = () => false, getQueryTerm } of generators) {
+        // todo support
+        if (typeof trigger !== 'undefined' && typeof trigger !== 'function') continue
+        if (!suggestionsCache || !trigger || trigger(currentPartValue, suggestionsCache.oldToken)) {
+            const tokensBeforePosition = allParts.slice(0, currentPartIndex + 1).map(([token]) => token)
+            if (custom) {
+                const customSuggestions = await custom(
+                    tokensBeforePosition,
+                    async command => {
+                        const res = executeShellCommandShared(command)
+                        if (typeof res === 'string') return res
+                        return (await res.execPromise).stdout
+                    },
+                    {
+                        currentProcess: '',
+                        sshPrefix: '',
+                        currentWorkingDirectory: cwdPath,
+                    },
+                )
+                const queryTerm =
+                    typeof getQueryTerm === 'string'
+                        ? getQueryTerm
+                        : getQueryTerm(
+                              // todo pass pass that after requiresSeparator
+                              currentPartValue,
+                          )
+                collectedSuggestions.push(...filterSuggestions(customSuggestions, queryTerm, { filterStrategy }))
+            }
+            if (script) {
+                script = typeof script === 'function' ? script(tokensBeforePosition) : script
+                let currentExec: import('child_process').ChildProcess | undefined
+                const out = await Promise.race<string>([
+                    (async (): Promise<string> => {
+                        const result = executeShellCommandShared(script as string)
+                        if (typeof result === 'string') return result
+                        currentExec = result.exec
+                        return (await result.execPromise).stdout
+                    })(),
+                    new Promise(resolve => {
+                        setTimeout(() => {
+                            currentExec?.kill()
+                            resolve('')
+                        }, scriptTimeout ?? globalSettings.scriptTimeout)
+                    }),
+                ])
+                const suggestions = splitOn
+                    ? out
+                          .split(splitOn)
+                          // todo1
+                          .filter(Boolean)
+                          .map((name): Fig.Suggestion => ({ name }))
+                    : postProcess(out, tokensBeforePosition)
+                collectedSuggestions.push(...suggestions)
+            }
+            // suggestionsCache = {}
+        }
+    }
+    return collectedSuggestions.map((suggestion): CustomCompletionItem => {
+        const completion = figSuggestionToCompletion(suggestion, info)
+        // todo set to current pos?
+        completion.range = undefined
+        return completion
+    })
 }
 
 const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => {
     const completions: CompletionItem[] = []
     // does it make sense to support it here?
-    if (arg.suggestCurrentToken) completions.push({ label: documentInfo.currentPartValue, kind: CompletionItemKind.Text, sortText: 'a000' })
+    if (arg.suggestCurrentToken)
+        completions.push({
+            label: documentInfo.currentPartValue,
+            kind: CompletionItemKind.Text,
+            sortText: 'a000',
+        })
     // todo optionsCanBreakVariadicArg
     const { suggestions, default: defaultValue } = arg
     // todo expect all props, handle type
     if (suggestions) completions.push(...compact(suggestions.map(suggestion => figSuggestionToCompletion(suggestion, documentInfo))))
-    completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
+    completions.push(...(await figGeneratorScriptToCompletions(arg, documentInfo)))
     if (defaultValue) {
         for (const completion of completions) {
             if (typeof completion.label !== 'object') continue
@@ -562,7 +684,7 @@ export const parseCommandString = (inputString: string, stringPos: number, strip
     }
     // always add '' part for positions like ' |' or 'spec | --option'
     if (!isInsidePart && inputString[stringPos - 1] === ' ') {
-        // previous part exist, let's distinguish it
+        // previous part exists, let's distinguish it
         currentPartOffset = stringPos
         currentPartValue = ''
         currentPartIndex++
@@ -623,7 +745,7 @@ const getDocumentParsedResult = (
                       currentEnteredValue: currentPartValue!,
                   }
                 : undefined,
-            // holds option + value, used for things like hover
+            // holds option name + option value, used for things like hover to hover them together
             completingOptionFull,
         },
     }

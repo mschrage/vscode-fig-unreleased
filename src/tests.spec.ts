@@ -58,8 +58,6 @@ const testCommandPart = (input: string, expectedValue: string, expectedIndex?: n
 }
 
 describe('parseCommandString', () => {
-    // parseCommandString('spec *.vsix *.log arg'))
-
     test('Basic', () => {
         const { partStart: cursor, ...result } = parseCommandStringWithCursor('yarn &&  pnpm| test')
         expect(result?.allParts).toEqual([

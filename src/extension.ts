@@ -30,13 +30,13 @@ import {
     WorkspaceEdit,
 } from 'vscode'
 import { API } from './extension-api'
-import { compact, ensureArray, findCustomArray, oneOf } from '@zardoy/utils'
+import { compact, ensureArray, findCustomArray } from '@zardoy/utils'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
 import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
 import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
-import { niceLookingCompletion, prepareNiceLookingCompletinons } from './external-utils'
+import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
@@ -80,7 +80,7 @@ export const activate = ({}: ExtensionContext) => {
 const globalSettings = {
     insertSpace: 'ifSubcommandOrOptionTakeArguments' as 'off' | 'always' | 'ifSubcommandOrOptionTakeArguments',
     defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
-    autoParameterHints: true,
+    autoParameterHints: 'afterSuggestionSelect' as 'off' | 'afterSpace' | 'afterSuggestionSelect',
     scriptEnable: true,
     scriptAllowList: [] as string[],
     scriptTimeout: 5000,
@@ -883,7 +883,7 @@ const fullCommandParse = (
     if (!documentInfo) return
     let { allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
     /* these requestes are not interested of gathering information of requested position */
-    const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'pathParts') as boolean
+    const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'pathParts')
 
     // avoid using positions to avoid .translate() crashes
     if (parsingReason !== 'completions') {
@@ -1244,7 +1244,7 @@ const ACCEPT_COMPLETION_COMMAND = `_${CONTRIBUTION_PREFIX}.acceptCompletion`
 const registerCommands = () => {
     commands.registerCommand(ACCEPT_COMPLETION_COMMAND, async ({ cursorRight } = {}) => {
         if (cursorRight) await commands.executeCommand('cursorRight')
-        if (globalSettings.autoParameterHints) commands.executeCommand('editor.action.triggerSuggest')
+        if (oneOf(globalSettings.autoParameterHints, 'afterSuggestionSelect', 'afterSpace')) commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
     })
 }
@@ -1608,7 +1608,7 @@ const registerLinter = () => {
     window.onDidChangeVisibleTextEditors(lintAllVisibleEditors)
     workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
         if (!supportedDocuments.includes(document)) return
-        if (contentChanges.length && contentChanges.every(({ text }) => text === ' ') && globalSettings.autoParameterHints) {
+        if (globalSettings.autoParameterHints === 'afterSpace' && contentChanges.length && contentChanges.every(({ text }) => text === ' ')) {
             commands.executeCommand('editor.action.triggerParameterHints')
         }
         doLinting(document)

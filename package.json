@@ -57,15 +57,46 @@
                     "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
                     "default": true
                 },
+                "figUnreleased.scriptsGenerators.enable": {
+                    "type": "boolean",
+                    "markdownDescription": "Wether to allow executing shell scripts on your machine for dynamic suggestions",
+                    "scope": "application",
+                    "default": true
+                },
+                "figUnreleased.scriptsGenerators.allowList": {
+                    "type": "array",
+                    "markdownDescription": "Allow to execute only speficic shell commands, empty array (by default) removes this limitation",
+                    "items": {
+                        "type": "string"
+                    },
+                    "scope": "application",
+                    "uniqueItems": true,
+                    "default": []
+                },
+                "figUnreleased.scriptsGenerators.scriptTimeout": {
+                    "type": "number",
+                    "scope": "application",
+                    "default": 5000
+                },
                 "figUnreleased.fuzzySearch": {
                     "type": "boolean",
                     "markdownDescription": "Wether to use fuzzy search, or prefix-only otherwise",
                     "default": true
                 },
                 "figUnreleased.autoParameterHints": {
-                    "type": "boolean",
-                    "markdownDescription": "Automatically trigger parameter hints (aka signature help) after space",
-                    "default": true
+                    "type": "string",
+                    "markdownDescription": "When to automatically trigger parameter hints (aka signature help)",
+                    "enum": [
+                        "off",
+                        "afterSpace",
+                        "afterSuggestionSelect"
+                    ],
+                    "enumDescriptions": [
+                        "Disable",
+                        "Trigger after adding a space",
+                        "Trigger after selecting a suggestion"
+                    ],
+                    "default": "afterSuggestionSelect"
                 },
                 "figUnreleased.insertSpace": {
                     "type": "string",

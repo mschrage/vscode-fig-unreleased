@@ -78,11 +78,12 @@ export const activate = ({}: ExtensionContext) => {
     return api
 }
 
-// Will be implemented into vscode settings
 const globalSettings = {
     insertSpace: 'ifSubcommandOrOptionTakeArguments' as 'off' | 'always' | 'ifSubcommandOrOptionTakeArguments',
     defaultFilterStrategy: 'prefix' as Exclude<Fig.Arg['filterStrategy'], 'default'>,
     autoParameterHints: true,
+    scriptEnable: true,
+    scriptAllowList: [] as string[],
     scriptTimeout: 5000,
     useFileIcons: true,
 }
@@ -299,7 +300,8 @@ const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: Do
         suggestion = {
             name: suggestion,
         }
-    if (filter && !doSuggestFiltering(suggestion as { name: string }, info)) return
+    suggestion.name ??= ''
+    if (filter && !doSuggestFiltering({ name: suggestion.name }, info)) return
     const completion = figBaseSuggestionToVscodeCompletion(suggestion, ensureArray(suggestion.name)[0]!, {
         kind: CompletionItemKind.Constant,
         sortTextPrepend: 'a',
@@ -335,7 +337,7 @@ const filterSuggestions = (
 ) => {
     const filterFn = (name: string) => name[filterStrategy === 'fuzzy' ? 'includes' : 'startsWith'](word)
     // todo also return that matched name
-    return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name!)))
+    return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name ?? '')))
 }
 
 let suggestionsCache:
@@ -365,11 +367,23 @@ const figGeneratorScriptToCompletions = async (
             suggestionsCache = undefined
         }
     }
-    let collectedSuggestions: Fig.Suggestion[] = []
+    const collectedSuggestions: Fig.Suggestion[] = []
     const cwdPath = getCwdUri(info._document)?.fsPath
     if (!cwdPath) return
     const executeShellCommandShared = (commandToExecute: string) => {
         try {
+            if (!globalSettings.scriptEnable || !isScriptExecutionAllowed) throw new Error('Script execution is not enabled')
+            const { scriptAllowList } = globalSettings
+            if (scriptAllowList.length) {
+                // use simplified parsing for performance reasons
+                for (const command of commandToExecute.split(/(&&?|\|\|?|;)/)) {
+                    const commandName = command.trimStart().split(' ')[0]
+                    const isCommandBanned = () => {
+                        return !scriptAllowList.includes(commandName)
+                    }
+                    if (isCommandBanned()) throw new Error(`Cannot execute script as ${commandName} is banned from user settings`)
+                }
+            }
             const util = require('util') as typeof import('util')
             const child_process = require('child_process') as typeof import('child_process')
             const exec = util.promisify(child_process.exec)
@@ -377,7 +391,7 @@ const figGeneratorScriptToCompletions = async (
             return {
                 exec: newExec.child,
                 out: newExec.then(
-                    ({ stdout }) => stdout,
+                    ({ stdout }) => stdout.trim(),
                     () => '',
                 ),
             }
@@ -434,14 +448,19 @@ const figGeneratorScriptToCompletions = async (
                     }),
                 ])
                 if (!postProcess && !splitOn) throw new Error(`Invalid ${info.specName} generator: either postProcess or splitOn must be defined`)
-                const suggestions = splitOn
-                    ? out
-                          .split(splitOn)
-                          // todo1
-                          .filter(Boolean)
-                          .map((name): Fig.Suggestion => ({ name }))
-                    : postProcess!(out, tokensBeforePosition)
-                collectedSuggestions.push(...suggestions)
+                try {
+                    const suggestions = splitOn
+                        ? out
+                              .split(splitOn)
+                              .map(x => x.trim())
+                              .filter(Boolean)
+                              .map((name): Fig.Suggestion => ({ name }))
+                        : postProcess!(out, tokensBeforePosition)
+                    collectedSuggestions.push(...suggestions)
+                } catch (err) {
+                    // don't let completion provider fail
+                    console.error(err)
+                }
             }
             // suggestionsCache = {}
         }
@@ -1240,6 +1259,10 @@ const initSettings = () => {
         globalSettings.insertSpace = getExtensionSetting('insertSpace')
         globalSettings.autoParameterHints = getExtensionSetting('autoParameterHints')
         globalSettings.defaultFilterStrategy = getExtensionSetting('fuzzySearch') ? 'fuzzy' : 'prefix'
+
+        globalSettings.scriptEnable = getExtensionSetting('scriptsGenerators.enable')
+        globalSettings.scriptAllowList = getExtensionSetting('scriptsGenerators.allowList')
+        globalSettings.scriptTimeout = getExtensionSetting('scriptsGenerators.scriptTimeout')
     }
     updateGlobalSettings()
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {

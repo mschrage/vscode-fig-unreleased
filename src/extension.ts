@@ -1,4 +1,3 @@
-/// <reference types="@withfig/autocomplete-types/index" />
 import _FIG_ALL_SPECS from 'FIG_ALL_SPECS'
 import {
     commands,
@@ -29,7 +28,7 @@ import {
     workspace,
     WorkspaceEdit,
 } from 'vscode'
-import { API } from './extension-api'
+import { API, RegisterLanguageSupportOptions } from './extension-api'
 import { compact, ensureArray, findCustomArray } from '@zardoy/utils'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
@@ -38,6 +37,8 @@ import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletion
 import { relative } from 'path-browserify'
 import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
+import { registerShellSupport } from './shellscriptSupport'
+import { registerPackageJsonSupport } from './packageJsonSupport'
 
 const CONTRIBUTION_PREFIX = 'figUnreleased'
 
@@ -51,6 +52,8 @@ const ALL_LOADED_SPECS = _FIG_ALL_SPECS.map(mod => mod.default).map(value => get
 
 let isScriptExecutionAllowed = false
 
+const registeredLanguageSupport: RegisteredLanguageSupport[] = []
+
 export const activate = ({}: ExtensionContext) => {
     isScriptExecutionAllowed = workspace.isTrusted
     workspace.onDidGrantWorkspaceTrust(() => {
@@ -59,10 +62,9 @@ export const activate = ({}: ExtensionContext) => {
 
     registerCommands()
     prepareNiceLookingCompletinons()
-    registerLanguageProviders()
-    registerSemanticHighlighting()
     registerUpdateOnFileRename()
-    registerLinter()
+    // todo1
+    // registerLinter()
     initSettings()
 
     const api: API = {
@@ -73,7 +75,14 @@ export const activate = ({}: ExtensionContext) => {
         getCompletionsSpecs() {
             return ALL_LOADED_SPECS
         },
+        registerLanguageSupport(selector, options) {
+            return registerLanguageSupport(selector, options)
+        },
     }
+
+    registerShellSupport(api)
+    registerPackageJsonSupport(api)
+
     return api
 }
 
@@ -90,15 +99,7 @@ const globalSettings = {
 }
 
 // #region Constants
-const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript']
-const SUPPORTED_PACKAGE_JSON_SELECTOR: DocumentSelector = { pattern: '**/package.json', scheme: '*' }
-const SUPPORTED_ALL_SELECTOR: DocumentSelector = [...SUPPORTED_SHELL_SELECTOR, SUPPORTED_PACKAGE_JSON_SELECTOR]
 
-/**
- * these specs come from npm packages
- * they should be probably installed locally
- */
-const FIG_PACKAGES_COMMANDS = ['eslint', 'electron', 'dotenv', 'esbuild', 'webpack', 'jest', 'vite', 'pre-commit', 'rollup', 'vue', 'ts-node', 'tsc']
 // probably vsce, vercel, volta, turbo, serve
 // todo other for package.json: suggest only installed clis, try to ban macos-only
 // #endregion
@@ -106,6 +107,11 @@ const FIG_PACKAGES_COMMANDS = ['eslint', 'electron', 'dotenv', 'esbuild', 'webpa
 // I included regions, so you can easily collapse categories.
 
 // #region types
+// will be extended soon
+type RegisteredLanguageSupport = {
+    selector: DocumentSelector
+}
+
 type CommandPartTuple = [contents: string, offset: number, isOption: boolean]
 type CommandPartParseTuple = [contents: string, offset: number]
 type CommandsParts = Array<{ parts: CommandPartParseTuple[]; start: number; op: string }>
@@ -635,8 +641,8 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
 // #endregion
 
 // #region Simple utils
-const getExtensionSetting = <T = any>(key: string) => {
-    return workspace.getConfiguration(CONTRIBUTION_PREFIX).get(key) as T
+const getExtensionSetting = <T = any>(key: string, document?: TextDocument) => {
+    return workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get(key) as T
 }
 
 const getCwdUri = ({ uri }: Pick<TextDocument, 'uri'>) => {
@@ -670,7 +676,7 @@ const fixPathArgRange = (inputString: string, startOffset: number, rangePos: [Po
 }
 
 const isDocumentSupported = (document: TextDocument) => {
-    return languages.match(SUPPORTED_ALL_SELECTOR, document)
+    // return languages.match(SUPPORTED_ALL_SELECTOR, document)
 }
 
 export const guessOptionSimilarName = (invalidName: string, validNames: string[]) => {
@@ -882,6 +888,8 @@ const fullCommandParse = (
     // needs cleanup
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
     { includeCachedCompletion }: { includeCachedCompletion?: boolean } = {},
+    // these come from API
+    // languageSupportInfo: Pick<RegisterLanguageSupportOptions, ''>
 ): undefined => {
     const inputText = document.getText(inputRange)
     const startPos = inputRange.start
@@ -1183,70 +1191,10 @@ type DocumentWithPos = {
     position: Position
 }
 
-// #region Range providers
-// they handle requesting position in file
-const provideRangeFromDocumentPositionPackageJson = ({ document, position }: DocumentWithPos) => {
-    const offset = document.offsetAt(position)
-    const location = getLocation(document.getText(), offset)
-    if (!location?.matches(['scripts', '*'])) return
-    const jsonCompletingInfo = getJsonCompletingInfo(location, document, position)
-    const { insideStringRange } = jsonCompletingInfo || {}
-    if (!insideStringRange) return
-    return insideStringRange
-}
-
-const shellBannedLineRegex = /^\s*(#|::|if|else|fi|return|function|"|'|[\w\d]+(=|\())/i
-const provideRangeFromDocumentPositionShellFile = ({ document, position }: DocumentWithPos) => {
-    const line = document.lineAt(position)
-    shellBannedLineRegex.lastIndex = 0
-    if (shellBannedLineRegex.test(line.text)) return
-    return line.range
-}
-
-const provideRangeFromDocumentPosition = ({ document, position }: DocumentWithPos) => {
-    // todo fix \"
-    if (languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document)) return provideRangeFromDocumentPositionPackageJson({ document, position })
-    if (languages.match(SUPPORTED_SHELL_SELECTOR, document)) return provideRangeFromDocumentPositionShellFile({ document, position })
-}
-// #endregion
-
 // #region All command locations
 // they return all command locations for requesting file
-const getInputCommandsShellFile = (document: TextDocument) => {
-    const ranges: Range[] = []
-    for (let lineNum = 0; lineNum < document.lineCount; lineNum++) {
-        const { text, range } = document.lineAt(lineNum)
-        shellBannedLineRegex.lastIndex = 0
-        if (shellBannedLineRegex.test(text)) continue
-        ranges.push(range)
-    }
-    return ranges
-}
 
-const getInputCommandsPackageJson = (document: TextDocument) => {
-    const root = parseTree(document.getText())
-    if (!root) return
-    const scriptsRootNode = findNodeAtLocation(root, ['scripts'])
-    const scriptsNodes = scriptsRootNode?.children
-    if (!scriptsNodes) return
-    const nodeObjectMap = (nodes: Node[], type: 'prop' | 'value') => {
-        const indexGetter = type === 'prop' ? 0 : 1
-        return compact(nodes.map(value => value.type === 'property' && value.children![indexGetter]))
-    }
-    const ranges = [] as Range[]
-    for (const node of nodeObjectMap(scriptsNodes, 'value')) {
-        const startOffset = node.offset + 1
-        const range = new Range(document.positionAt(startOffset), document.positionAt(startOffset + node.length - 2))
-        ranges.push(range)
-    }
-    return ranges
-}
-
-const getAllInputCommandLocations = (document: TextDocument) => {
-    return languages.match(SUPPORTED_PACKAGE_JSON_SELECTOR, document) ? getInputCommandsPackageJson(document) : getInputCommandsShellFile(document)
-}
-
-const getAllCommandLocations = (document: TextDocument, inputRanges = getAllInputCommandLocations(document)) => {
+const getAllCommandLocations = (document: TextDocument, inputRanges: Range[]) => {
     const outputRanges: Range[] = []
     for (const range of inputRanges ?? []) {
         const allCommands = getAllCommandsFromString(document.getText(range)).filter(part => !getIsPartShouldBeIgnored(part))
@@ -1300,7 +1248,16 @@ const initSettings = () => {
     })
 }
 
-const registerLanguageProviders = () => {
+const registerLanguageSupport: API['registerLanguageSupport'] = (selector, options) => {
+    const disposables: Disposable[] = []
+    registeredLanguageSupport.push({ selector })
+    registerLanguageProviders(selector, options, disposables)
+
+    return { disposables }
+}
+
+const registerLanguageProviders = (documentSelector: DocumentSelector, options: RegisterLanguageSupportOptions, disposables: Disposable[]) => {
+    const { provideSingleLineRangeFromPosition } = options
     const COMPLETION_TRIGGER_CHARACTERS = [
         ' ',
         '-',
@@ -1316,15 +1273,15 @@ const registerLanguageProviders = () => {
     ]
 
     const completionsCache: Map<TextDocument, CompletionItem[] | undefined> = new Map()
-    languages.registerCompletionItemProvider(
-        SUPPORTED_ALL_SELECTOR,
+    const completionProvider = languages.registerCompletionItemProvider(
+        documentSelector,
         {
             async provideCompletionItems(document, position, token, context) {
                 let cachedCompletions: CompletionItem[] | undefined
                 if (context.triggerKind === CompletionTriggerKind.TriggerForIncompleteCompletions) {
                     cachedCompletions = completionsCache.get(document)
                 }
-                const commandRange = provideRangeFromDocumentPosition({ document, position })
+                const commandRange = await provideSingleLineRangeFromPosition(document, position)
                 if (!commandRange) return
                 const collectedData: ParseCollectedData = {}
                 fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeCachedCompletion: !!cachedCompletions })
@@ -1346,10 +1303,12 @@ const registerLanguageProviders = () => {
         },
         ...COMPLETION_TRIGGER_CHARACTERS,
     )
+    disposables.push(completionProvider)
 
-    languages.registerSignatureHelpProvider(SUPPORTED_ALL_SELECTOR, {
-        provideSignatureHelp(document, position, token, context) {
-            const commandRange = provideRangeFromDocumentPosition({ document, position })
+    const helpProvider = languages.registerSignatureHelpProvider(documentSelector, {
+        async provideSignatureHelp(document, position, token, context) {
+            // todo use cached result
+            const commandRange = await provideSingleLineRangeFromPosition(document, position)
             if (!commandRange) return
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
@@ -1375,9 +1334,12 @@ const registerLanguageProviders = () => {
             }
         },
     })
-    languages.registerHoverProvider(SUPPORTED_ALL_SELECTOR, {
-        provideHover(document, position) {
-            const commandRange = provideRangeFromDocumentPosition({ document, position })
+    disposables.push(helpProvider)
+
+    const hoverProvider = languages.registerHoverProvider(documentSelector, {
+        async provideHover(document, position) {
+            // todo use cached result?
+            const commandRange = await provideSingleLineRangeFromPosition(document, position)
             if (!commandRange) return
             const collectedData: ParseCollectedData = {}
             fullCommandParse(document, commandRange, position, collectedData, 'hover')
@@ -1393,6 +1355,7 @@ const registerLanguageProviders = () => {
             return hover
         },
     })
+    disposables.push(hoverProvider)
 
     const pathStringToUri = (document: TextDocument, contents: string) => {
         const cwdUri = getCwdUri(document)
@@ -1400,8 +1363,8 @@ const registerLanguageProviders = () => {
         return Uri.joinPath(cwdUri, contents)
     }
 
-    const getFilePathPart = ({ document, position }: DocumentWithPos, checkFileExistence: boolean) => {
-        const commandRange = provideRangeFromDocumentPosition({ document, position })
+    const getFilePathPart = async ({ document, position }: DocumentWithPos, checkFileExistence: boolean) => {
+        const commandRange = await provideSingleLineRangeFromPosition(document, position)
         if (!commandRange) return
         const collectedData: ParseCollectedData = {}
         fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
@@ -1423,9 +1386,9 @@ const registerLanguageProviders = () => {
         }
     }
 
-    languages.registerDefinitionProvider(SUPPORTED_ALL_SELECTOR, {
-        provideDefinition(document, position, token) {
-            const { contents, uri, range } = getFilePathPart({ document, position }, true) ?? {}
+    const defProvider = languages.registerDefinitionProvider(documentSelector, {
+        async provideDefinition(document, position, token) {
+            const { contents, uri, range } = (await getFilePathPart({ document, position }, true)) ?? {}
             if (!contents) return
             return [
                 {
@@ -1437,16 +1400,17 @@ const registerLanguageProviders = () => {
             ]
         },
     })
+    disposables.push(defProvider)
 
-    languages.registerRenameProvider(SUPPORTED_ALL_SELECTOR, {
+    const renameProvider = languages.registerRenameProvider(documentSelector, {
         async prepareRename(document, position, token) {
-            const { range, fileExists } = getFilePathPart({ document, position }, true) ?? {}
+            const { range, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
             if (!range) throw new Error('You cannot rename this element')
             if (!(await fileExists)) throw new Error("Renaming file doesn't exist")
             return range
         },
         async provideRenameEdits(document, position, newName, token) {
-            const { range, uri, fileExists } = getFilePathPart({ document, position }, true) ?? {}
+            const { range, uri, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
             if (!uri || !(await fileExists)) return
             const edit = new WorkspaceEdit()
             edit.set(document.uri, [{ range: range!, newText: newName }])
@@ -1454,12 +1418,13 @@ const registerLanguageProviders = () => {
             return edit
         },
     })
+    disposables.push(renameProvider)
 
-    languages.registerSelectionRangeProvider(SUPPORTED_ALL_SELECTOR, {
-        provideSelectionRanges(document, positions, token) {
+    const selectionProvider = languages.registerSelectionRangeProvider(documentSelector, {
+        async provideSelectionRanges(document, positions, token) {
             const ranges: SelectionRange[] = []
             for (const position of positions) {
-                const commandRange = provideRangeFromDocumentPosition({ document, position })
+                const commandRange = await provideSingleLineRangeFromPosition(document, position)
                 if (!commandRange) continue
                 const startPos = commandRange.start
                 const text = document.getText(commandRange)
@@ -1487,11 +1452,20 @@ const registerLanguageProviders = () => {
             return ranges
         },
     })
+    disposables.push(selectionProvider)
+
+    registerSemanticHighlighting(documentSelector, options, disposables)
 
     // todo codeActions to shorten, unshorten options, subcommands (aliases)
 }
 
-const registerSemanticHighlighting = () => {
+const registerSemanticHighlighting = (
+    documentSelector: DocumentSelector,
+    { getAllSingleLineCommandLocations }: RegisterLanguageSupportOptions,
+    disposables: Disposable[],
+) => {
+    if (!getAllSingleLineCommandLocations) return
+
     // temporarily use existing tokens, instead of defining own
     const tempTokensMap: Record<SemanticLegendType, string> = {
         command: 'namespace',
@@ -1504,13 +1478,15 @@ const registerSemanticHighlighting = () => {
     const semanticLegend = new SemanticTokensLegend(Object.values(tempTokensMap))
 
     const semanticTokensProviderListeners: Array<() => void> = []
-    languages.registerDocumentSemanticTokensProvider(
-        SUPPORTED_ALL_SELECTOR,
+    const highlightProvider = languages.registerDocumentSemanticTokensProvider(
+        documentSelector,
         {
             provideDocumentSemanticTokens(document, token) {
-                if (!getExtensionSetting('semanticHighlighting')) return
+                if (!getExtensionSetting('semanticHighlighting', document)) return
                 const builder = new SemanticTokensBuilder(semanticLegend)
-                const ranges = getAllCommandLocations(document)
+                const inputRanges = getAllSingleLineCommandLocations(document)
+                if (!inputRanges) return
+                const ranges = getAllCommandLocations(document, inputRanges)
                 for (const range of ranges) {
                     const collectedData: ParseCollectedData = {}
                     fullCommandParse(document, range, range.start, collectedData, 'semanticHighlight')
@@ -1537,14 +1513,17 @@ const registerSemanticHighlighting = () => {
         },
         semanticLegend,
     )
+    disposables.push(highlightProvider)
 
-    workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (affectsConfiguration('figUnreleased.semanticHighlighting') || affectsConfiguration('figUnreleased.ignoreClis')) {
-            for (const semanticTokensProviderListener of semanticTokensProviderListeners) {
-                semanticTokensProviderListener()
+    disposables.push(
+        workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
+            if (affectsConfiguration('figUnreleased.semanticHighlighting') || affectsConfiguration('figUnreleased.ignoreClis')) {
+                for (const semanticTokensProviderListener of semanticTokensProviderListeners) {
+                    semanticTokensProviderListener()
+                }
             }
-        }
-    })
+        }),
+    )
 }
 
 const registerUpdateOnFileRename = () => {
@@ -1556,7 +1535,7 @@ const registerUpdateOnFileRename = () => {
         const edit = new WorkspaceEdit()
         for (const document of documentsToParse) {
             const docTextEdits: TextEdit[] = []
-            const ranges = getAllCommandLocations(document)
+            const ranges = getAllCommandLocations(document, [])
             if (!ranges) continue
             for (const range of ranges) {
                 const collectedData: ParseCollectedData = {}
@@ -1579,7 +1558,7 @@ const registerUpdateOnFileRename = () => {
 
 // All linting & parsing logic was writting with the following in mind:
 // Each command range can take one line only
-const registerLinter = () => {
+const registerLinter = (selector: DocumentSelector, { getAllSingleLineCommandLocations }: RegisterLanguageSupportOptions) => {
     const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
     let supportedDocuments: TextDocument[] = []
     const doLinting = (document: TextDocument) => {
@@ -1593,7 +1572,7 @@ const registerLinter = () => {
             option: 'optionName',
         }
         const allLintProblems: ParseCollectedData['lintProblems'] = []
-        const lintRanges = getAllCommandLocations(document)
+        const lintRanges = getAllCommandLocations(document, [])
         for (const range of lintRanges) {
             if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}

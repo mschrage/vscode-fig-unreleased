@@ -134,6 +134,7 @@
                 },
                 "figUnreleased.semanticHighlighting": {
                     "type": "boolean",
+                    "scope": "language-overridable",
                     "default": true
                 },
                 "figUnreleased.validate": {

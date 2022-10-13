@@ -1,11 +1,12 @@
-import { CompletionItem, CompletionItemKind, extensions, workspace } from 'vscode'
+import { CompletionItem, CompletionItemKind, Extension, extensions, workspace } from 'vscode'
 
-let useCompletionNiceLook
+// #region vscode related
+let useCompletionNiceLook: boolean
 
 export const prepareNiceLookingCompletinons = () => {
     const updateStatus = () => {
         useCompletionNiceLook =
-            workspace.getConfiguration('workbench', null).get('iconTheme') === 'vscode-icons' && extensions.getExtension('vscode-icons-team.vscode-icons')
+            workspace.getConfiguration('workbench', null).get('iconTheme') === 'vscode-icons' && !!extensions.getExtension('vscode-icons-team.vscode-icons')
     }
     updateStatus()
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
@@ -24,3 +25,12 @@ export const niceLookingCompletion = (extOrName: string, isFolderKind = false, f
           }
 
 export const getCompletionLabelName = ({ label }: Pick<CompletionItem, 'label'>) => (typeof label === 'string' ? label : label.label)
+
+// #endregion
+// general purpose
+
+/**
+ * Type-friendly version of `[].includes()`
+ * For example when used with string union, it would give you autocomplete
+ */
+export const oneOf = <T, K extends T>(value: T, ...values: [...K[]]): boolean => values.includes(value as any)

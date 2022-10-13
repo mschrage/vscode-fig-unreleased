@@ -135,7 +135,7 @@
                         "warning",
                         "error"
                     ],
-                    "default": "information"
+                    "default": "ignore"
                 },
                 "figUnreleased.lint.noArgInput": {
                     "type": "string",

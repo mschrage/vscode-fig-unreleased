@@ -37,10 +37,13 @@
                             "type": "object",
                             "properties": {
                                 "name": {
-                                    "type": "string"
+                                    "type": "string",
+                                    "sortText": "1"
                                 },
                                 "insertValue": {
-                                    "type": "string"
+                                    "type": "string",
+                                    "sortText": "2",
+                                    "markdownDescription": "Use `{cursor}` placeholder to create snippet tabstops"
                                 },
                                 "description": {
                                     "type": "string"
@@ -50,7 +53,9 @@
                                 "name"
                             ]
                         }
-                    }
+                    },
+                    "scope": "application",
+                    "default": {}
                 },
                 "figUnreleased.useFileIcons": {
                     "type": "boolean",

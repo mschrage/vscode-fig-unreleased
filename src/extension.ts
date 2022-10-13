@@ -85,6 +85,8 @@ const globalSettings = {
     scriptAllowList: [] as string[],
     scriptTimeout: 5000,
     useFileIcons: true,
+    mixins: {} as { [commandLocation: string]: Array<{ name: string; insertValue?: string; description?: string }> },
+    ignoreClis: [], // todo
 }
 
 // #region Constants
@@ -178,7 +180,12 @@ const figBaseSuggestionToVscodeCompletion = (
     const completion = new CompletionItem({ label: displayName || initialName }) as Omit<CompletionItem, 'label'> & { label: CompletionItemLabel }
 
     completion.insertText = insertValue !== undefined ? new SnippetString().appendText(insertValue) : undefined
-    if (completion.insertText) completion.insertText.value = completion.insertText.value.replace('{cursor\\}', '$1')
+    if (completion.insertText) {
+        let placeholderCount = 1
+        completion.insertText.value = completion.insertText.value.replaceAll('{cursor\\}', () => {
+            return `$${placeholderCount++}`
+        })
+    }
     completion.documentation = (description && new MarkdownString(description)) || undefined
     // vscode uses .sort() on completions
     completion.sortText = sortTextPrepend + (100 - priority).toString().padStart(3, '0')
@@ -567,7 +574,12 @@ const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean
     const insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
 
     const { insertText } = completion
-    if (insertSpaceType && (typeof insertText !== 'object' || !insertText.value.includes('$1'))) {
+    if (
+        insertSpaceType &&
+        (typeof insertText !== 'object' ||
+            // for now, there is only {cursor} placeholder
+            !insertText.value.includes('$1'))
+    ) {
         if (insertSpaceType === 'single') {
             if (typeof insertText === 'object') insertText.value += ' '
             else completion.insertText += ' '
@@ -894,6 +906,7 @@ const fullCommandParse = (
         const [contents, offset] = allParts[index]
         return [startPos.translate(0, offset), startPos.translate(0, fixEndingPos(inputText, offset + contents.length))] as [Position, Position]
     }
+
     collectedData.partsSemanticTypes = []
     collectedData.currentPartIndex = currentPartIndex
     collectedData.hoverRange = partToRange(currentPartIndex)
@@ -911,6 +924,21 @@ const fullCommandParse = (
         if (!items) return
         collectedData.collectedCompletionsPromise!.push(items)
     }
+
+    pushCompletions(() => {
+        const textBeforePosition = allParts
+            .slice(0, currentPartIndex)
+            .map(([content]) => content)
+            .join(' ')
+        const collectedSuggestions: Fig.Suggestion[] = []
+        for (const [commandString, suggestions] of Object.entries(globalSettings.mixins)) {
+            if (textBeforePosition === commandString) {
+                collectedSuggestions.push(...suggestions)
+                break
+            }
+        }
+        return compact(collectedSuggestions.map(suggestion => figSuggestionToCompletion(suggestion, { ...documentInfo, kind: CompletionItemKind.Snippet })))
+    })
 
     const setSemanticType = (index: number, type: SemanticLegendType) => {
         if (parsingReason !== 'semanticHighlight') return
@@ -961,15 +989,17 @@ const fullCommandParse = (
         options: true,
         subcommands: true,
     }
+    /** current subcommand, can be changed between tokens */
     let subcommand = figRootSubcommand
+    let argMetCount = 0
+
     const getSubcommandOption = (name: string) =>
         subcommand.options?.find(({ name: optName }) => (Array.isArray(optName) ? optName.includes(name) : optName === name))
-    // todo r
-    let argMetCount = 0
     // todo resolv
     const alreadyUsedOptions = [] as string[]
     collectedData.currentPart = allParts[currentPartIndex]
     collectedData.currentPartRange = partToRange(currentPartIndex)
+    // iterate on each token
     for (const [_iteratingPartIndex, [partContents, _partStartPos, partIsOption]] of (!inspectOnlyAllParts
         ? allParts.slice(1, currentPartIndex)
         : allParts.slice(1)
@@ -1251,6 +1281,7 @@ const registerCommands = () => {
 
 const initSettings = () => {
     const updateGlobalSettings = () => {
+        globalSettings.mixins = getExtensionSetting('mixins')
         globalSettings.useFileIcons = getExtensionSetting('useFileIcons')
         globalSettings.insertSpace = getExtensionSetting('insertSpace')
         globalSettings.autoParameterHints = getExtensionSetting('autoParameterHints')

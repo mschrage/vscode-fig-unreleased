@@ -62,6 +62,16 @@
                     "markdownDescription": "When `vscode-icons` icon theme is active, use file icons for options whenever possible",
                     "default": true
                 },
+                "figUnreleased.ignoreClis": {
+                    "description": "List of CLI tools that this extension should ignore completely",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "uniqueItems": true,
+                    "scope": "application",
+                    "default": []
+                },
                 "figUnreleased.scriptsGenerators.enable": {
                     "type": "boolean",
                     "markdownDescription": "Wether to allow executing shell scripts on your machine for dynamic suggestions",

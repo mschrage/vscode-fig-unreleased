@@ -86,7 +86,7 @@ const globalSettings = {
     scriptTimeout: 5000,
     useFileIcons: true,
     mixins: {} as { [commandLocation: string]: Array<{ name: string; insertValue?: string; description?: string }> },
-    ignoreClis: [], // todo
+    ignoreClis: [] as string[],
 }
 
 // #region Constants
@@ -214,10 +214,10 @@ const figBaseSuggestionToVscodeCompletion = (
 const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepend'>, includeOnlyList?: string[]) => {
     return compact(
         ALL_LOADED_SPECS.map(specCommand => {
-            if (!doSuggestFiltering(specCommand, info)) return
             let { name } = specCommand
-            // todo display both?
+            // fig behavior
             if (Array.isArray(name)) name = name[0]
+            if (!doSuggestFiltering(specCommand, info) || globalSettings.ignoreClis.includes(name)) return
             if (includeOnlyList && !includeOnlyList.includes(name)) return
             const completion = figBaseSuggestionToVscodeCompletion(specCommand, name, {
                 ...info,
@@ -883,8 +883,6 @@ const fullCommandParse = (
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
     { includeCachedCompletion }: { includeCachedCompletion?: boolean } = {},
 ): undefined => {
-    // todo
-    const knownSpecNames = ALL_LOADED_SPECS.flatMap(({ name }) => ensureArray(name))
     const inputText = document.getText(inputRange)
     const startPos = inputRange.start
     const stringPos = _position.character - startPos.character
@@ -893,11 +891,11 @@ const fullCommandParse = (
         includeCached: includeCachedCompletion ?? false,
     })
     if (!documentInfo) return
-    let { allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
+    let { specName, allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
     /* these requestes are not interested of gathering information of requested position */
     const inspectOnlyAllParts = oneOf(parsingReason, 'lint', 'semanticHighlight', 'pathParts')
 
-    // avoid using positions to avoid .translate() crashes
+    // avoid using positions to avoid potential .translate() crashes
     if (parsingReason !== 'completions') {
         documentInfo.realPos = undefined
         documentInfo.startPos = undefined
@@ -949,21 +947,25 @@ const fullCommandParse = (
     if (currentPartIndex === 0) {
         pushCompletions(() => getRootSpecCompletions(documentInfo))
         if (parsingReason === 'hover') {
-            const spec = getCompletingSpec(documentInfo.specName)
+            const spec = getCompletingSpec(specName)
             collectedData.currentSubcommand = spec && getFigSubcommand(spec)
         }
         if (!inspectOnlyAllParts) return
     }
-    // validate command name
-    if (parsingReason === 'lint' && documentInfo.specName.trim() !== '' && !knownSpecNames.includes(documentInfo.specName)) {
-        collectedData.lintProblems.push({
-            message: `Unknown command ${documentInfo.specName}`,
-            range: partToRange(0),
-            type: 'commandName',
-        })
+
+    if (globalSettings.ignoreClis.includes(specName)) return
+    const spec = getCompletingSpec(specName)
+    if (!spec) {
+        // report commandName lint problem
+        if (parsingReason === 'lint' && specName.trim() !== '') {
+            collectedData.lintProblems.push({
+                message: `Unknown command ${specName}`,
+                range: partToRange(0),
+                type: 'commandName',
+            })
+        }
+        return
     }
-    const spec = getCompletingSpec(documentInfo.specName)
-    if (!spec) return
     const figRootSubcommand = getFigSubcommand(spec)
 
     const getIsPathPart = (arg: Fig.Arg) => {
@@ -1282,6 +1284,7 @@ const registerCommands = () => {
 const initSettings = () => {
     const updateGlobalSettings = () => {
         globalSettings.mixins = getExtensionSetting('mixins')
+        globalSettings.ignoreClis = getExtensionSetting('ignoreClis')
         globalSettings.useFileIcons = getExtensionSetting('useFileIcons')
         globalSettings.insertSpace = getExtensionSetting('insertSpace')
         globalSettings.autoParameterHints = getExtensionSetting('autoParameterHints')
@@ -1536,7 +1539,7 @@ const registerSemanticHighlighting = () => {
     )
 
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (affectsConfiguration('figUnreleased.semanticHighlighting')) {
+        if (affectsConfiguration('figUnreleased.semanticHighlighting') || affectsConfiguration('figUnreleased.ignoreClis')) {
             for (const semanticTokensProviderListener of semanticTokensProviderListeners) {
                 semanticTokensProviderListener()
             }
@@ -1645,7 +1648,7 @@ const registerLinter = () => {
         doLinting(document)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (['figUnreleased.validate', 'figUnreleased.lint'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
+        if (['figUnreleased.validate', 'figUnreleased.lint', 'figUnreleased.ignoreClis'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
     })
 }
 

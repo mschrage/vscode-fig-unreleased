@@ -1,6 +1,5 @@
 /// <reference types="@withfig/autocomplete-types/index" />
 import _FIG_ALL_SPECS from 'FIG_ALL_SPECS'
-import picomatch from 'picomatch/posix'
 import {
     commands,
     CompletionItem,
@@ -238,9 +237,7 @@ const templateToSuggestions = async (inputTemplate: Fig.Template, info: Document
     if (includeFilesKindType) {
         const cwd = getCwdUri(info._document)
         if (cwd) {
-            suggestions.push(
-                ...(await getFilesSuggestions(cwd, info.currentPartValue ?? '', undefined, includeFilesKindType === true ? undefined : includeFilesKindType)),
-            )
+            suggestions.push(...(await getFilesSuggestions(cwd, info.currentPartValue ?? '', includeFilesKindType === true ? undefined : includeFilesKindType)))
         }
     }
     return suggestions
@@ -584,7 +581,7 @@ const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean
 }
 
 // todo to options, introduce flattened lvl
-const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?: string, includeType?: FileType) => {
+const getFilesSuggestions = async (cwd: Uri, stringContents: string, includeType?: FileType) => {
     const folderPath = stringContents.split('/').slice(0, -1).join('/')
     let filesList: [name: string, type: FileType][]
     try {
@@ -592,11 +589,10 @@ const getFilesSuggestions = async (cwd: Uri, stringContents: string, globFilter?
     } catch {
         filesList = []
     }
-    const isMatch = globFilter && picomatch(globFilter)
     // todo add .. if not going outside of workspace
     return compact(
         filesList.map(([name, type]): Fig.Suggestion | undefined => {
-            if ((includeType && !(type & includeType)) || (isMatch && !isMatch(name))) return undefined
+            if (includeType && !(type & includeType)) return undefined
             const isDir = type & FileType.Directory
             return {
                 name: isDir ? `${name}/` : name,

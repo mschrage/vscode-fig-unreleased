@@ -22,6 +22,9 @@ const options: RegisterLanguageSupportOptions = {
         }
         return ranges
     },
+    pathAutoRename: {
+        glob: '*.sh,*.bat',
+    },
 }
 
 export const registerShellSupport = (api: API) => {

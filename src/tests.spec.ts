@@ -72,12 +72,13 @@ describe('parseCommandString', () => {
     })
 
     test('Globs handling', () => {
-        const { partStart: cursor, ...result } = parseCommandStringWithCursor('spec *.vsix *|.log arg')
+        const { partStart: cursor, ...result } = parseCommandStringWithCursor("eslint '**/*.ts' *.vsix *|.log arg")
         expect(result?.allParts).toEqual([
-            ['spec', 0, false],
-            ['*.vsix', 5, false],
-            ['*.log', 12, false],
-            ['arg', 18, false],
+            ['eslint', 0, false],
+            ['**/*.ts', 7, false],
+            ['*.vsix', 17, false],
+            ['*.log', 24, false],
+            ['arg', 30, false],
         ])
     })
 

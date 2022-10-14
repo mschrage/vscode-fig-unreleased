@@ -1,5 +1,6 @@
 import _FIG_ALL_SPECS from 'FIG_ALL_SPECS'
 import {
+    CancellationTokenSource,
     commands,
     CompletionItem,
     CompletionItemKind,
@@ -21,6 +22,8 @@ import {
     SemanticTokensBuilder,
     SemanticTokensLegend,
     SnippetString,
+    Tab,
+    TabInputText,
     TextDocument,
     TextEdit,
     Uri,
@@ -28,12 +31,10 @@ import {
     workspace,
     WorkspaceEdit,
 } from 'vscode'
-import { API, RegisterLanguageSupportOptions } from './extension-api'
+import { API, RegisterLanguageSupportOptions, FeatureControl } from './extension-api'
 import { compact, ensureArray, findCustomArray } from '@zardoy/utils'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
-import { findNodeAtLocation, getLocation, Node, parseTree } from 'jsonc-parser'
-import { getJsonCompletingInfo } from '@zardoy/vscode-utils/build/jsonCompletions'
 import { relative } from 'path-browserify'
 import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
@@ -52,7 +53,9 @@ const ALL_LOADED_SPECS = _FIG_ALL_SPECS.map(mod => mod.default).map(value => get
 
 let isScriptExecutionAllowed = false
 
-const registeredLanguageSupport: RegisteredLanguageSupport[] = []
+const registeredLanguageProviders: RegisteredLanguageProvider[] = []
+// these callback will be fired only when language support is added via api AFTER activation
+const registerLanguageSupportListeners: Array<EventCallback<void>> = []
 
 export const activate = ({}: ExtensionContext) => {
     isScriptExecutionAllowed = workspace.isTrusted
@@ -63,9 +66,12 @@ export const activate = ({}: ExtensionContext) => {
     registerCommands()
     prepareNiceLookingCompletinons()
     registerUpdateOnFileRename()
-    // todo1
-    // registerLinter()
     initSettings()
+
+    // do parsing & linting after ext host initializing
+    setTimeout(() => {
+        registerLinter()
+    })
 
     const api: API = {
         /** let other extensions contribute/extend with their completions */
@@ -75,9 +81,7 @@ export const activate = ({}: ExtensionContext) => {
         getCompletionsSpecs() {
             return ALL_LOADED_SPECS
         },
-        registerLanguageSupport(selector, options) {
-            return registerLanguageSupport(selector, options)
-        },
+        registerLanguageSupport,
     }
 
     registerShellSupport(api)
@@ -107,8 +111,9 @@ const globalSettings = {
 // I included regions, so you can easily collapse categories.
 
 // #region types
-// will be extended soon
-type RegisteredLanguageSupport = {
+type EventCallback<T> = (event: T) => void
+
+interface RegisteredLanguageProvider extends RegisterLanguageSupportOptions, FeatureControl {
     selector: DocumentSelector
 }
 
@@ -675,10 +680,6 @@ const fixPathArgRange = (inputString: string, startOffset: number, rangePos: [Po
     return ["'", '"'].includes(char) ? [rangePos[0].translate(0, 1), rangePos[1].translate(0, -1)] : rangePos
 }
 
-const isDocumentSupported = (document: TextDocument) => {
-    // return languages.match(SUPPORTED_ALL_SELECTOR, document)
-}
-
 export const guessOptionSimilarName = (invalidName: string, validNames: string[]) => {
     // dont even try for flags like -b
     if (/^-[^-]/.exec(invalidName)) return
@@ -855,8 +856,9 @@ type LintProblem = {
 
 type CustomCompletionItem = CompletionItem & { shouldBeCached?: boolean }
 
-// can also be refactored to try/finally instead, but'd require extra indent
+// can also be refactored to try/finally instead, but d require extra indent
 interface ParseCollectedData {
+    specName?: string
     argSignatureHelp?: Fig.Arg
     hoverRange?: [Position, Position]
     currentOption?: Fig.Option
@@ -920,6 +922,7 @@ const fullCommandParse = (
     collectedData.filePathParts = []
     collectedData.collectedCompletions = []
     collectedData.collectedCompletionsPromise = []
+    collectedData.specName = specName
     const pushCompletions = (getItems: () => CompletionItem[] | undefined) => {
         if (parsingReason !== 'completions') return
         collectedData.collectedCompletions!.push(...(getItems() ?? []))
@@ -1191,9 +1194,6 @@ type DocumentWithPos = {
     position: Position
 }
 
-// #region All command locations
-// they return all command locations for requesting file
-
 const getAllCommandLocations = (document: TextDocument, inputRanges: Range[]) => {
     const outputRanges: Range[] = []
     for (const range of inputRanges ?? []) {
@@ -1201,7 +1201,7 @@ const getAllCommandLocations = (document: TextDocument, inputRanges: Range[]) =>
         const stringStartPos = range.start
         outputRanges.push(
             ...compact(
-                allCommands.map(({ parts, start }, i) => {
+                allCommands.map(({ parts, start }) => {
                     const firstPart = parts[0]
                     if (!firstPart) return
                     const [lastContents, endOffset] = parts.at(-1)!
@@ -1213,7 +1213,6 @@ const getAllCommandLocations = (document: TextDocument, inputRanges: Range[]) =>
     }
     return outputRanges
 }
-// #endregion
 
 // lifted for type inferrence
 const semanticLegendTypes = ['command', 'subcommand', 'arg', 'option', 'option-arg', 'dangerous'] as const
@@ -1248,15 +1247,38 @@ const initSettings = () => {
     })
 }
 
-const registerLanguageSupport: API['registerLanguageSupport'] = (selector, options) => {
+const getBestLanguageProvider = (document: TextDocument) => {
+    let matchedProvider: RegisteredLanguageProvider | undefined
+    let bestMatchedScore = 0
+    for (const provider of registeredLanguageProviders) {
+        const score = languages.match(provider.selector, document)
+        if (score === 0 || score < bestMatchedScore) continue
+        matchedProvider = provider
+        bestMatchedScore = score
+        // best possible score
+        if (score === 10) break
+    }
+    return matchedProvider
+}
+
+const registerLanguageSupport: API['registerLanguageSupport'] = (selector, options, featureControl = {}) => {
     const disposables: Disposable[] = []
-    registeredLanguageSupport.push({ selector })
-    registerLanguageProviders(selector, options, disposables)
+    registeredLanguageProviders.push({ selector, ...options, ...featureControl })
+    registerLanguageProviders(selector, options, featureControl, disposables)
+
+    for (const callback of registerLanguageSupportListeners) {
+        callback()
+    }
 
     return { disposables }
 }
 
-const registerLanguageProviders = (documentSelector: DocumentSelector, options: RegisterLanguageSupportOptions, disposables: Disposable[]) => {
+const registerLanguageProviders = (
+    documentSelector: DocumentSelector,
+    options: RegisterLanguageSupportOptions,
+    featureControl: FeatureControl,
+    disposables: Disposable[],
+) => {
     const { provideSingleLineRangeFromPosition } = options
     const COMPLETION_TRIGGER_CHARACTERS = [
         ' ',
@@ -1277,26 +1299,32 @@ const registerLanguageProviders = (documentSelector: DocumentSelector, options: 
         documentSelector,
         {
             async provideCompletionItems(document, position, token, context) {
+                // let api to dynamically disable completion provider
+                const { enableCompletionProvider } = featureControl
+                if (!enableCompletionProvider) return
+
                 let cachedCompletions: CompletionItem[] | undefined
                 if (context.triggerKind === CompletionTriggerKind.TriggerForIncompleteCompletions) {
                     cachedCompletions = completionsCache.get(document)
                 }
+
                 const commandRange = await provideSingleLineRangeFromPosition(document, position)
                 if (!commandRange) return
                 const collectedData: ParseCollectedData = {}
                 fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeCachedCompletion: !!cachedCompletions })
                 const { collectedCompletions = [], collectedCompletionsPromise = [], collectedCompletionsIncomplete } = collectedData
-                // completionsCache.set(key, value)
                 const completionsFromPromise = await Promise.all(collectedCompletionsPromise)
                 const completions = [...collectedCompletions, ...completionsFromPromise.flat(1)]
+
                 if (!cachedCompletions) {
                     completionsCache.set(
                         document,
                         completions.filter(({ shouldBeCached }) => shouldBeCached),
                     )
                 }
+                const processCompletion = (typeof enableCompletionProvider === 'object' && enableCompletionProvider.processCompletion) || (x => x)
                 return {
-                    items: [...completions, ...(cachedCompletions ?? [])],
+                    items: compact([...completions, ...(cachedCompletions ?? [])].map(processCompletion)),
                     isIncomplete: collectedCompletionsIncomplete,
                 }
             },
@@ -1526,17 +1554,84 @@ const registerSemanticHighlighting = (
     )
 }
 
+const urisToDocuments = async (uris: Uri[]) => {
+    return await Promise.all(uris.map(uri => workspace.openTextDocument(uri)))
+}
+
+type DocumentEdit = {
+    doc: TextDocument
+    edits: Array<{
+        command: string
+        edit: TextEdit
+    }>
+}
+
+const askForPathsUpdate = async (edits: DocumentEdit[]): Promise<boolean> => {
+    if (getExtensionSetting('updatePathsOnFileRename') === 'always') return true
+    const fileEdits = edits.map(({ doc, edits }) => `${workspace.asRelativePath(doc.uri)} (${edits.map(({ command }) => command).join(', ')})`).join('\n')
+    const title = `Update paths for ${edits.length} files?`
+    const choice = await window.showInformationMessage(
+        title,
+        {
+            modal: true,
+            detail: `Following files will be affected:\n${fileEdits}`,
+        },
+        { title: 'No', isCloseAffordance: true },
+        { title: 'Yes' },
+        { title: 'Always automatically update paths' },
+        { title: 'Never ask again' },
+    )
+    if (!choice || choice.title === 'No') return false
+    if (choice.title === 'Yes') return true
+
+    const configuration = workspace.getConfiguration(CONTRIBUTION_PREFIX, null)
+    if (choice.title === 'Always automatically update paths') {
+        await configuration.update('updatePathsOnFileRename', 'always')
+        return true
+    }
+    if (choice.title === 'Never ask again') {
+        await configuration.update('updatePathsOnFileRename', 'never')
+        return false
+    }
+    return false
+}
+
 const registerUpdateOnFileRename = () => {
     workspace.onDidRenameFiles(async ({ files: renamedFiles }) => {
-        if (!getExtensionSetting('updatePathsOnFileRename')) return
-        // todo done for demo purposes / don't make implicit edits
-        const documentsToParse = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
-        // const updateLocations
-        const edit = new WorkspaceEdit()
+        if (getExtensionSetting('updatePathsOnFileRename') === 'never') return
+        const allContributedGlobs = compact(
+            registeredLanguageProviders.map(({ pathAutoRename }) => (typeof pathAutoRename === 'object' ? pathAutoRename.glob : undefined)),
+        )
+        if (!allContributedGlobs.length) return
+        const configuration = workspace.getConfiguration()
+        // todo-low investigate using bulitin method
+        const defaultSearchExcludeGlob = Object.entries({ ...(configuration.get('files.exclude') as {}), ...(configuration.get('search.exclude') as {}) })
+            .filter(([key, val]: [string, boolean]) => val === true && !key.includes('{'))
+            .map(([key]) => key)
+        // todo provide loading ui + cancel, if > 300ms
+        const tokenSource = new CancellationTokenSource()
+        setTimeout(() => tokenSource.cancel(), 300)
+        const foundUris = await workspace.findFiles(
+            `**/{${allContributedGlobs.join(',')}}`,
+            `**/{${defaultSearchExcludeGlob.join(',')}}`,
+            80,
+            tokenSource.token,
+        )
+        const documentsToParse = await urisToDocuments(foundUris)
+
+        const edits: DocumentEdit[] = []
         for (const document of documentsToParse) {
-            const docTextEdits: TextEdit[] = []
-            const ranges = getAllCommandLocations(document, [])
+            const { getAllSingleLineCommandLocations } = getBestLanguageProvider(document) ?? {}
+            if (!getAllSingleLineCommandLocations) continue
+            const inputRanges = getAllSingleLineCommandLocations(document)
+            if (!inputRanges) continue
+            const ranges = getAllCommandLocations(document, inputRanges)
             if (!ranges) continue
+            const docEdits: DocumentEdit = {
+                doc: document,
+                edits: [],
+            }
+
             for (const range of ranges) {
                 const collectedData: ParseCollectedData = {}
                 fullCommandParse(document, range, range.start, collectedData, 'pathParts')
@@ -1547,18 +1642,32 @@ const registerUpdateOnFileRename = () => {
                     const newPath = renamedFile.newUri.path
                     const newRelativePath = relative(docCwd.path, newPath)
                     // todo1 preserve ./
-                    docTextEdits.push({ range: part[3], newText: newRelativePath })
+                    docEdits.edits.push({
+                        command: collectedData.specName!,
+                        edit: { range: part[3], newText: newRelativePath },
+                    })
                 }
             }
-            if (docTextEdits.length > 0) edit.set(document.uri, docTextEdits)
+            if (docEdits.edits.length > 0) edits.push(docEdits)
         }
-        if (edit.size) await workspace.applyEdit(edit)
+        if (edits.length && (await askForPathsUpdate(edits))) {
+            const workspaceEdit = new WorkspaceEdit()
+            for (const { doc, edits: docEdits } of edits) {
+                workspaceEdit.set(
+                    doc.uri,
+                    docEdits.map(({ edit }) => edit),
+                )
+            }
+            await workspace.applyEdit(workspaceEdit)
+        }
     })
 }
 
+const tabsToDocuments = (tabs: readonly Tab[]) => urisToDocuments(compact(tabs.map(tab => (tab.input instanceof TabInputText ? tab.input.uri : undefined))))
+
 // All linting & parsing logic was writting with the following in mind:
 // Each command range can take one line only
-const registerLinter = (selector: DocumentSelector, { getAllSingleLineCommandLocations }: RegisterLanguageSupportOptions) => {
+const registerLinter = () => {
     const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
     let supportedDocuments: TextDocument[] = []
     const doLinting = (document: TextDocument) => {
@@ -1572,7 +1681,11 @@ const registerLinter = (selector: DocumentSelector, { getAllSingleLineCommandLoc
             option: 'optionName',
         }
         const allLintProblems: ParseCollectedData['lintProblems'] = []
-        const lintRanges = getAllCommandLocations(document, [])
+        const { getAllSingleLineCommandLocations } = getBestLanguageProvider(document) ?? {}
+        if (!getAllSingleLineCommandLocations) return
+        const inputRanges = getAllSingleLineCommandLocations(document)
+        if (!inputRanges) return
+        const lintRanges = getAllCommandLocations(document, inputRanges)
         for (const range of lintRanges) {
             if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}
@@ -1606,19 +1719,23 @@ const registerLinter = (selector: DocumentSelector, { getAllSingleLineCommandLoc
             ),
         )
     }
-    const lintAllVisibleEditors = () => {
-        // todo use tabs instead
-        supportedDocuments = window.visibleTextEditors.map(({ document }) => document).filter(document => isDocumentSupported(document))
-        for (const document of supportedDocuments) {
+    const lintDocuments = (documents: TextDocument[]) => {
+        for (const document of documents) {
             doLinting(document)
         }
     }
-    // do parsing & linting after ext host initializing
-    setTimeout(() => {
-        lintAllVisibleEditors()
-    })
+    const lintAllDocuments = async () => {
+        const allTabs = window.tabGroups.all.flatMap(({ tabs }) => tabs)
+        supportedDocuments = await tabsToDocuments(allTabs)
+        lintDocuments(supportedDocuments)
+    }
+    lintAllDocuments()
 
-    window.onDidChangeVisibleTextEditors(lintAllVisibleEditors)
+    window.tabGroups.onDidChangeTabs(async ({ opened }) => {
+        const newDocuments = (await tabsToDocuments(opened)).filter(document => !supportedDocuments.includes(document))
+        supportedDocuments.push(...newDocuments)
+        lintDocuments(newDocuments)
+    })
     workspace.onDidChangeTextDocument(({ document, contentChanges }) => {
         if (!supportedDocuments.includes(document)) return
         if (globalSettings.autoParameterHints === 'afterSpace' && contentChanges.length && contentChanges.every(({ text }) => text === ' ')) {
@@ -1627,7 +1744,10 @@ const registerLinter = (selector: DocumentSelector, { getAllSingleLineCommandLoc
         doLinting(document)
     })
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
-        if (['figUnreleased.validate', 'figUnreleased.lint', 'figUnreleased.ignoreClis'].some(key => affectsConfiguration(key))) lintAllVisibleEditors()
+        if (['figUnreleased.validate', 'figUnreleased.lint', 'figUnreleased.ignoreClis'].some(key => affectsConfiguration(key))) lintAllDocuments()
+    })
+    registerLanguageSupportListeners.push(() => {
+        lintAllDocuments()
     })
 }
 

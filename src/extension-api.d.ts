@@ -15,9 +15,20 @@ export interface CompletionAdditionalOptions {
     // proposePackage: string
 }
 
+/** Here you can override speficic feature (or provider) enablement / behavior */
 export interface FeatureControl {
-    // todo1
-    disable?
+    /**
+     * @default true
+     */
+    enableCompletionProvider?:
+        | boolean
+        | {
+              processCompletion?(completion: vsc.CompletionItem): vsc.CompletionItem | undefined
+          }
+    /**
+     * @default true
+     */
+    readonly enableRenameProvider?: boolean
 }
 
 export interface RegisterLanguageSupportOptions {
@@ -31,6 +42,18 @@ export interface RegisterLanguageSupportOptions {
      * @default By default we provide cwd
      */
     getCwd?(): vsc.Uri | undefined
+    /**
+     * Optionally add support for `updatePathsOnFileRename` feature
+     */
+    pathAutoRename?: {
+        /**
+         * Simple glob pattern that, that must not include `{` or `}`
+         * It will get prefixed with **\/
+         * @example `*.sh,*.bat` or `package.json`
+         * @experimental
+         */
+        glob: string
+    }
 }
 
 export interface API {

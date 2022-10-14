@@ -41,6 +41,9 @@ const options: RegisterLanguageSupportOptions = {
         }
         return ranges
     },
+    pathAutoRename: {
+        glob: 'package.json',
+    },
 }
 
 export const registerPackageJsonSupport = (api: API) => {

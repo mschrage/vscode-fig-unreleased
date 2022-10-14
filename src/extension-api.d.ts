@@ -18,6 +18,11 @@ export interface CompletionAdditionalOptions {
 /** Here you can override speficic feature (or provider) enablement / behavior */
 export interface FeatureControl {
     /**
+     * List of providers to disable
+     * @default []
+     */
+    disableProviders?: ('rename' | 'rangeSelection' | 'hover' | 'signatureHelp' | 'definition')[]
+    /**
      * @default true
      */
     enableCompletionProvider?:
@@ -25,25 +30,22 @@ export interface FeatureControl {
         | {
               processCompletion?(completion: vsc.CompletionItem): vsc.CompletionItem | undefined
           }
-    /**
-     * @default true
-     */
-    readonly enableRenameProvider?: boolean
 }
 
 export interface RegisterLanguageSupportOptions {
     /** handle requesting position in document */
     provideSingleLineRangeFromPosition(document: vsc.TextDocument, position: vsc.Position): MaybePromise<vsc.Range | undefined>
     getAllSingleLineCommandLocations?(document: vsc.TextDocument): vsc.Range[] | undefined
-    // todo1
+    // todo implement
     /**
      * We don't do any caching of this method, so most probably you want to provide prepare result here
      * If undefined is returned, we skip executing script generators & displaying filepath suggestions
      * @default By default we provide cwd
      */
-    getCwd?(): vsc.Uri | undefined
+    // getCwd?(): vsc.Uri | undefined
     /**
      * Optionally add support for `updatePathsOnFileRename` feature
+     * But note, that `getAllSingleLineCommandLocations` must be implemented to make it work
      */
     pathAutoRename?: {
         /**
@@ -57,8 +59,8 @@ export interface RegisterLanguageSupportOptions {
 }
 
 export interface API {
-    addCompletions(rootSubcommand: Fig.Subcommand, additionalOptions: CompletionAdditionalOptions = {}): void
-    getCompletionsSpecs(): Fig.Subcommand[]
+    addCompletionsSpec(rootSubcommand: Fig.Subcommand, additionalOptions: CompletionAdditionalOptions = {}): void
+    getCompletionsSpecs(): readonly Fig.Subcommand[]
     registerLanguageSupport(
         selector: vsc.DocumentSelector,
         options: RegisterLanguageSupportOptions,

@@ -75,7 +75,7 @@ export const activate = ({}: ExtensionContext) => {
 
     const api: API = {
         /** let other extensions contribute/extend with their completions */
-        addCompletions(rootSubcommand) {
+        addCompletionsSpec(rootSubcommand) {
             ALL_LOADED_SPECS.push(rootSubcommand)
         },
         getCompletionsSpecs() {
@@ -228,7 +228,7 @@ const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepen
             let { name } = specCommand
             // fig behavior
             if (Array.isArray(name)) name = name[0]
-            if (!doSuggestFiltering(specCommand, info) || globalSettings.ignoreClis.includes(name)) return
+            if (!doSuggestFiltering(specCommand, info) || globalSettings.ignoreClis.includes(name) || name.includes('/')) return
             if (includeOnlyList && !includeOnlyList.includes(name)) return
             const completion = figBaseSuggestionToVscodeCompletion(specCommand, name, {
                 ...info,
@@ -671,8 +671,9 @@ const getCompletingSpec = (specName: string | Fig.LoadSpec): Fig.Spec | undefine
 }
 
 // todo it just works
-const fixEndingPos = (inputString: string, endingOffset: number) => {
-    const char = inputString[endingOffset + 1]
+const fixEndingPos = (inputString: string, offset: number, contents: string) => {
+    const char = inputString[offset]
+    const endingOffset = offset + contents.length
     return ["'", '"'].includes(char) ? endingOffset + 2 : endingOffset
 }
 const fixPathArgRange = (inputString: string, startOffset: number, rangePos: [Position, Position]): [Position, Position] => {
@@ -912,7 +913,7 @@ const fullCommandParse = (
     }
     const partToRange = (index: number) => {
         const [contents, offset] = allParts[index]
-        return [startPos.translate(0, offset), startPos.translate(0, fixEndingPos(inputText, offset + contents.length))] as [Position, Position]
+        return [startPos.translate(0, offset), startPos.translate(0, fixEndingPos(inputText, offset, contents))] as [Position, Position]
     }
 
     collectedData.partsSemanticTypes = []
@@ -1301,7 +1302,7 @@ const registerLanguageProviders = (
             async provideCompletionItems(document, position, token, context) {
                 // let api to dynamically disable completion provider
                 const { enableCompletionProvider } = featureControl
-                if (!enableCompletionProvider) return
+                if (enableCompletionProvider === false) return
 
                 let cachedCompletions: CompletionItem[] | undefined
                 if (context.triggerKind === CompletionTriggerKind.TriggerForIncompleteCompletions) {
@@ -1333,39 +1334,47 @@ const registerLanguageProviders = (
     )
     disposables.push(completionProvider)
 
-    const helpProvider = languages.registerSignatureHelpProvider(documentSelector, {
-        async provideSignatureHelp(document, position, token, context) {
-            // todo use cached result
-            const commandRange = await provideSingleLineRangeFromPosition(document, position)
-            if (!commandRange) return
-            const collectedData: ParseCollectedData = {}
-            fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
-            const { argSignatureHelp: arg } = collectedData
-            if (!arg) return
-            let hint = arg.description ?? arg.name ?? 'argument'
-            // todo it always feel like it asks for something
-            if (arg.isOptional) hint += '?'
-            if (arg.default) hint += ` (${arg.default})`
-            return {
-                activeParameter: 0,
-                activeSignature: 0,
-                signatures: [
-                    {
-                        label: hint,
-                        parameters: [
-                            {
-                                label: hint,
-                            },
-                        ],
-                    },
-                ],
-            }
+    const { disableProviders = [] } = featureControl
+
+    const helpProvider = languages.registerSignatureHelpProvider(
+        documentSelector,
+        {
+            async provideSignatureHelp(document, position, token, context) {
+                if (disableProviders.includes('signatureHelp')) return
+                // todo use cached result
+                const commandRange = await provideSingleLineRangeFromPosition(document, position)
+                if (!commandRange) return
+                const collectedData: ParseCollectedData = {}
+                fullCommandParse(document, commandRange, position, collectedData, 'signatureHelp')
+                const { argSignatureHelp: arg } = collectedData
+                if (!arg) return
+                let hint = arg.description ?? arg.name ?? 'argument'
+                // todo it always feel like it asks for something
+                if (arg.isOptional) hint += '?'
+                if (arg.default) hint += ` (${arg.default})`
+                return {
+                    activeParameter: 0,
+                    activeSignature: 0,
+                    signatures: [
+                        {
+                            label: hint,
+                            parameters: [
+                                {
+                                    label: hint,
+                                },
+                            ],
+                        },
+                    ],
+                }
+            },
         },
-    })
+        '=',
+    )
     disposables.push(helpProvider)
 
     const hoverProvider = languages.registerHoverProvider(documentSelector, {
         async provideHover(document, position) {
+            if (disableProviders.includes('hover')) return
             // todo use cached result?
             const commandRange = await provideSingleLineRangeFromPosition(document, position)
             if (!commandRange) return
@@ -1416,6 +1425,7 @@ const registerLanguageProviders = (
 
     const defProvider = languages.registerDefinitionProvider(documentSelector, {
         async provideDefinition(document, position, token) {
+            if (disableProviders.includes('definition')) return
             const { contents, uri, range } = (await getFilePathPart({ document, position }, true)) ?? {}
             if (!contents) return
             return [
@@ -1430,26 +1440,29 @@ const registerLanguageProviders = (
     })
     disposables.push(defProvider)
 
-    const renameProvider = languages.registerRenameProvider(documentSelector, {
-        async prepareRename(document, position, token) {
-            const { range, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
-            if (!range) throw new Error('You cannot rename this element')
-            if (!(await fileExists)) throw new Error("Renaming file doesn't exist")
-            return range
-        },
-        async provideRenameEdits(document, position, newName, token) {
-            const { range, uri, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
-            if (!uri || !(await fileExists)) return
-            const edit = new WorkspaceEdit()
-            edit.set(document.uri, [{ range: range!, newText: newName }])
-            edit.renameFile(uri, Uri.joinPath(getCwdUri({ uri })!, newName))
-            return edit
-        },
-    })
-    disposables.push(renameProvider)
+    if (disableProviders.includes('rename')) {
+        const renameProvider = languages.registerRenameProvider(documentSelector, {
+            async prepareRename(document, position, token) {
+                const { range, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
+                if (!range) throw new Error('You cannot rename this element')
+                if (!(await fileExists)) throw new Error("Renaming file doesn't exist")
+                return range
+            },
+            async provideRenameEdits(document, position, newName, token) {
+                const { range, uri, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}
+                if (!uri || !(await fileExists)) return
+                const edit = new WorkspaceEdit()
+                edit.set(document.uri, [{ range: range!, newText: newName }])
+                edit.renameFile(uri, Uri.joinPath(getCwdUri({ uri })!, newName))
+                return edit
+            },
+        })
+        disposables.push(renameProvider)
+    }
 
     const selectionProvider = languages.registerSelectionRangeProvider(documentSelector, {
         async provideSelectionRanges(document, positions, token) {
+            if (disableProviders.includes('rangeSelection')) return
             const ranges: SelectionRange[] = []
             for (const position of positions) {
                 const commandRange = await provideSingleLineRangeFromPosition(document, position)
@@ -1461,7 +1474,7 @@ const registerLanguageProviders = (
                 const { currentPartOffset, currentPartValue, allParts } = parseResult
                 const curRange = new Range(
                     startPos.translate(0, currentPartOffset),
-                    startPos.translate(0, fixEndingPos(text, currentPartOffset + currentPartValue.length)),
+                    startPos.translate(0, fixEndingPos(text, currentPartOffset, currentPartValue)),
                 )
                 const includeInnerRange = ['"', "'"].includes(text[currentPartOffset])
 

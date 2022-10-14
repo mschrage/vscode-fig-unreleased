@@ -54,6 +54,22 @@ Would be disabled by default.
 
 ![1](media/auto-rename-paths.gif)
 
+## API
+
+This extension supports API, which you can use to:
+
+- Add support to your language, like `xml`
+- Add support for new specs
+- Use extension's known specs
+
+See more at [./extension-api.md](./extension-api.md)
+
+### Use Development Specs
+
+Use `npm link` or `pnpm link` with path to your local version of `@withfig/autocomplete` repo.
+
+To start extension, run `pnpm start` and hit F5 in VS Code to start extension debugging.
+
 ### TODO
 
 Inline all my deps

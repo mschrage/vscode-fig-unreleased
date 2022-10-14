@@ -28,7 +28,7 @@ export interface FeatureControl {
     enableCompletionProvider?:
         | boolean
         | {
-              processCompletion?(completion: vsc.CompletionItem): vsc.CompletionItem | undefined
+              processCompletions?(completion: vsc.CompletionItem[], info: { specName: string }): vsc.CompletionItem[]
           }
 }
 

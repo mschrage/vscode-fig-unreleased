@@ -310,13 +310,28 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
     )
 }
 
-const figSuggestionToCompletion = (suggestion: string | Fig.Suggestion, info: DocumentInfoForCompl, { filter = true } = {}) => {
+const figSuggestionToCompletion = (
+    suggestion: string | Fig.Suggestion,
+    info: DocumentInfoForCompl,
+    { filterStrategy = true as Fig.Arg['filterStrategy'] | boolean } = {},
+) => {
     if (typeof suggestion === 'string')
         suggestion = {
             name: suggestion,
         }
     suggestion.name ??= ''
-    if (filter && !doSuggestFiltering({ name: suggestion.name }, info)) return
+    if (
+        filterStrategy !== false &&
+        !doSuggestFiltering(
+            {
+                name: suggestion.name,
+                filterStrategy: filterStrategy === true ? /* use default */ undefined : filterStrategy,
+            },
+            info,
+        )
+    ) {
+        return
+    }
     const completion = figBaseSuggestionToVscodeCompletion(suggestion, ensureArray(suggestion.name)[0]!, {
         kind: CompletionItemKind.Constant,
         sortTextPrepend: 'a',
@@ -481,7 +496,7 @@ const figGeneratorScriptToCompletions = async (
         }
     }
     return collectedSuggestions.map((suggestion): CustomCompletionItem | undefined => {
-        const completion = figSuggestionToCompletion(suggestion, info, { filter: false })
+        const completion = figSuggestionToCompletion(suggestion, info, { filterStrategy: false })
         if (!completion) return
         // todo set to current pos?
         completion.range = undefined
@@ -502,7 +517,18 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
     // todo optionsCanBreakVariadicArg
     const { suggestions, default: defaultValue } = arg
     // todo expect all props, handle type
-    if (suggestions) completions.push(...compact(suggestions.map(suggestion => figSuggestionToCompletion(suggestion, documentInfo))))
+    if (suggestions) {
+        completions.push(
+            ...compact(
+                suggestions.map(suggestion =>
+                    figSuggestionToCompletion(suggestion, documentInfo, {
+                        // todo(codebase) def check
+                        filterStrategy: arg.filterStrategy,
+                    }),
+                ),
+            ),
+        )
+    }
     if (!documentInfo.includeCached) {
         completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
     }
@@ -566,8 +592,8 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 // #endregion
 
 // #region Completion helpers
-const doSuggestFiltering = ({ name }: { name: string | string[] }, { currentPartValue }: DocumentInfo) => {
-    if (globalSettings.defaultFilterStrategy === 'fuzzy') {
+const doSuggestFiltering = ({ name, filterStrategy }: Pick<Fig.Subcommand, 'name' | 'filterStrategy'>, { currentPartValue }: DocumentInfo) => {
+    if (filterStrategy ?? globalSettings.defaultFilterStrategy === 'fuzzy') {
         // let vscode handle the sorting, it knows how to do that
         return true
     }
@@ -1323,9 +1349,9 @@ const registerLanguageProviders = (
                         completions.filter(({ shouldBeCached }) => shouldBeCached),
                     )
                 }
-                const processCompletion = (typeof enableCompletionProvider === 'object' && enableCompletionProvider.processCompletion) || (x => x)
+                const processCompletions = (typeof enableCompletionProvider === 'object' && enableCompletionProvider.processCompletions) || (x => x)
                 return {
-                    items: compact([...completions, ...(cachedCompletions ?? [])].map(processCompletion)),
+                    items: processCompletions([...completions, ...(cachedCompletions ?? [])], { specName: collectedData.specName! }),
                     isIncomplete: collectedCompletionsIncomplete,
                 }
             },

@@ -325,7 +325,7 @@ const figSuggestionToCompletion = (
         !doSuggestFiltering(
             {
                 name: suggestion.name,
-                filterStrategy: filterStrategy === true ? /* use default */ undefined : filterStrategy,
+                filterStrategy: filterStrategy === true ? 'default' : filterStrategy,
             },
             info,
         )
@@ -380,6 +380,8 @@ let suggestionsCache:
       }
     | undefined
 
+const generatorsCache = new Map<Fig.Generator, { dirPath?: string; updated: number; data: Fig.Suggestion[] }>()
+
 const figGeneratorScriptToCompletions = async (
     { generators = [], debounce, filterStrategy }: Pick<Fig.Arg, 'debounce' | 'generators' | 'filterStrategy'>,
     info: DocumentInfo,
@@ -397,8 +399,8 @@ const figGeneratorScriptToCompletions = async (
             suggestionsCache = undefined
         }
     }
-    const collectedSuggestions: Fig.Suggestion[] = []
     const cwdPath = getCwdUri(info._document)?.fsPath
+    // todo allow custom generators, but without skip cache by dir
     if (!cwdPath) return
     const executeShellCommandShared = (commandToExecute: string) => {
         try {
@@ -432,37 +434,71 @@ const figGeneratorScriptToCompletions = async (
             }
         }
     }
+
+    const collectedCompletions: CompletionItem[] = []
+    const addCompletions = (suggestions: Fig.Suggestion[], filterTermUsed: boolean) => {
+        collectedCompletions.push(
+            ...compact(
+                suggestions.map(suggestion => {
+                    const completion = figSuggestionToCompletion(suggestion, info, { filterStrategy: !filterTermUsed })
+                    if (!completion) return
+                    // todo probably it can be improved
+                    if (filterTermUsed) completion.range = undefined
+                    return completion
+                }),
+            ),
+        )
+    }
+
     generators = ensureArray(generators)
     // todo use promise.all
-    for (let { script, scriptTimeout, postProcess, splitOn, custom, trigger = () => false, getQueryTerm } of generators) {
+    for (const generator of generators) {
+        let { script, scriptTimeout, postProcess, splitOn, custom, trigger = () => false, getQueryTerm, cache } = generator
         // todo support
         if (typeof trigger !== 'undefined' && typeof trigger !== 'function') continue
+        if (cache) {
+            const cachedGenerator = generatorsCache.get(generator)
+            const { ttl = 3600 } = cache
+            const cacheIsGood =
+                !!cachedGenerator && (!cache.cacheByDirectory || cachedGenerator.dirPath === cwdPath) && Date.now() - cachedGenerator.updated < ttl
+            if (cacheIsGood) {
+                addCompletions(cachedGenerator.data, false)
+                continue
+            }
+        }
         if (!suggestionsCache || !trigger || trigger(currentPartValue, suggestionsCache.oldToken)) {
-            const tokensBeforePosition = allParts.slice(0, currentPartIndex + 1).map(([token]) => token)
+            const prevTokensIncludingPosition = allParts.slice(0, currentPartIndex + 1).map(([token]) => token)
+            const locallyCollectedSuggestions: Fig.Suggestion[] = []
+            let queryTermUsed = false
             if (custom) {
-                const customSuggestions = await custom(
-                    tokensBeforePosition,
-                    async command => {
-                        const res = executeShellCommandShared(command)
-                        return await res.out
-                    },
-                    {
-                        currentProcess: '',
-                        sshPrefix: '',
-                        currentWorkingDirectory: cwdPath,
-                    },
-                )
-                const queryTerm =
-                    typeof getQueryTerm === 'string'
-                        ? getQueryTerm
-                        : getQueryTerm?.(
-                              // todo pass pass that after requiresSeparator
-                              currentPartValue,
-                          )
-                collectedSuggestions.push(...filterSuggestions(customSuggestions, queryTerm || currentPartValue, { filterStrategy }))
+                try {
+                    const customSuggestions = await custom(
+                        prevTokensIncludingPosition,
+                        async command => {
+                            const res = executeShellCommandShared(command)
+                            return await res.out
+                        },
+                        {
+                            currentProcess: '',
+                            sshPrefix: '',
+                            currentWorkingDirectory: cwdPath,
+                        },
+                    )
+                    const queryTerm =
+                        typeof getQueryTerm === 'string'
+                            ? getQueryTerm
+                            : getQueryTerm?.(
+                                  // todo pass pass that after requiresSeparator
+                                  currentPartValue,
+                              )
+                    locallyCollectedSuggestions.push(...(queryTerm ? filterSuggestions(customSuggestions, queryTerm, { filterStrategy }) : customSuggestions))
+                    queryTermUsed = queryTerm !== undefined
+                } catch (err) {
+                    console.error(err)
+                }
             }
             if (script) {
-                script = typeof script === 'function' ? script(tokensBeforePosition) : script
+                script = typeof script === 'function' ? script(prevTokensIncludingPosition) : script
                 let currentExec: import('child_process').ChildProcess | undefined
                 const out = await Promise.race<string>([
                     (async (): Promise<string> => {
@@ -485,23 +521,25 @@ const figGeneratorScriptToCompletions = async (
                               .map(x => x.trim())
                               .filter(Boolean)
                               .map((name): Fig.Suggestion => ({ name }))
-                        : postProcess!(out, tokensBeforePosition)
-                    collectedSuggestions.push(...suggestions)
+                        : postProcess!(out, prevTokensIncludingPosition)
+                    locallyCollectedSuggestions.push(...suggestions)
                 } catch (err) {
                     // don't let completion provider fail
                     console.error(err)
                 }
             }
+            if (cache) {
+                generatorsCache.set(generator, {
+                    updated: Date.now(),
+                    data: locallyCollectedSuggestions,
+                    dirPath: cwdPath,
+                })
+            }
+            addCompletions(locallyCollectedSuggestions, queryTermUsed)
             // suggestionsCache = {}
         }
     }
-    return collectedSuggestions.map((suggestion): CustomCompletionItem | undefined => {
-        const completion = figSuggestionToCompletion(suggestion, info, { filterStrategy: false })
-        if (!completion) return
-        // todo set to current pos?
-        completion.range = undefined
-        return completion
-    })
+    return collectedCompletions
 }
 
 // option or subcommand arg
@@ -593,8 +631,9 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 
 // #region Completion helpers
 const doSuggestFiltering = ({ name, filterStrategy }: Pick<Fig.Subcommand, 'name' | 'filterStrategy'>, { currentPartValue }: DocumentInfo) => {
-    if (filterStrategy ?? globalSettings.defaultFilterStrategy === 'fuzzy') {
-        // let vscode handle the sorting, it knows how to do that
+    if (!filterStrategy || filterStrategy === 'default') filterStrategy = globalSettings.defaultFilterStrategy
+    if (filterStrategy === 'fuzzy') {
+        // let vscode handle the filtering, it knows how to do that
         return true
     }
     return ensureArray(name).some(x => x.startsWith(currentPartValue))

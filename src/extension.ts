@@ -399,8 +399,10 @@ const figGeneratorScriptToCompletions = async (
             suggestionsCache = undefined
         }
     }
-    const cwdPath = getCwdUri(info._document)?.fsPath
+    const cwdUri = getCwdUri(info._document)
     // todo allow custom generators, but without skip cache by dir
+    if (!cwdUri || cwdUri.scheme !== 'file') return
+    const cwdPath = cwdUri.fsPath
     if (!cwdPath) return
     const executeShellCommandShared = (commandToExecute: string) => {
         try {

@@ -1,4 +1,4 @@
-import { CompletionItem, CompletionItemKind, Extension, extensions, workspace } from 'vscode'
+import { CompletionItem, CompletionItemKind, extensions, Uri, workspace } from 'vscode'
 
 // #region vscode related
 let useCompletionNiceLook: boolean
@@ -25,6 +25,10 @@ export const niceLookingCompletion = (extOrName: string, isFolderKind = false, f
           }
 
 export const getCompletionLabelName = ({ label }: Pick<CompletionItem, 'label'>) => (typeof label === 'string' ? label : label.label)
+
+export const urisToDocuments = async (uris: Uri[]) => {
+    return await Promise.all(uris.map(uri => workspace.openTextDocument(uri)))
+}
 
 // #endregion
 // general purpose

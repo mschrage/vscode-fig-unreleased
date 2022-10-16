@@ -7,7 +7,7 @@ type MaybePromise<T> = T | Promise<T>
 export interface CompletionAdditionalOptions {
     // todo1
     /**
-     * For now matter for package.json scripts only. Set to false if package, containing the command should be installed locally first.
+     * For now matters for package.json scripts only. Set to false if package, containing the command should be installed locally first.
      * @default true
      */
     // isGlobal: boolean
@@ -56,14 +56,27 @@ export interface RegisterLanguageSupportOptions {
          */
         glob: string
     }
+    /**
+     * Wether the spec can be used in specific context (installed locally for example)
+     * User can disable this
+     */
+    isSpecCanBeUsed?(specName: string, file: vsc.Uri): boolean | string
 }
 
 export interface API {
     addCompletionsSpec(rootSubcommand: Fig.Subcommand, additionalOptions: CompletionAdditionalOptions = {}): void
     getCompletionsSpecs(): readonly Fig.Subcommand[]
+    // getLoadedCompletionSpecs
     registerLanguageSupport(
         selector: vsc.DocumentSelector,
         options: RegisterLanguageSupportOptions,
         featureControl: FeatureControl = {},
     ): { disposables: vsc.Disposable[] }
+
+    /** Interface for working with general events */
+    events: {
+        fire(type: 'lint', documents: vsc.TextDocument[] | undefined): void
+
+        onDidChangeSpecs: vsc.Event<void>
+    }
 }

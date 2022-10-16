@@ -128,9 +128,14 @@
                     "default": "ifSubcommandOrOptionTakeArguments"
                 },
                 "figUnreleased.updatePathsOnFileRename": {
-                    "type": "boolean",
+                    "type": "string",
                     "description": "Auto update file paths in shell files / package.json scripts on file rename",
-                    "default": true
+                    "enum": [
+                        "never",
+                        "prompt",
+                        "always"
+                    ],
+                    "default": "prompt"
                 },
                 "figUnreleased.semanticHighlighting": {
                     "type": "boolean",
@@ -152,6 +157,17 @@
                         "error"
                     ],
                     "default": "ignore"
+                },
+                "figUnreleased.lint.commandNotAllowedContext": {
+                    "type": "string",
+                    "scope": "language-overridable",
+                    "enum": [
+                        "ignore",
+                        "information",
+                        "warning",
+                        "error"
+                    ],
+                    "default": "information"
                 },
                 "figUnreleased.lint.noArgInput": {
                     "type": "string",
@@ -195,16 +211,13 @@
         "@types/vscode": "^1.71.0",
         "@withfig/autocomplete": "^2.422.0",
         "@withfig/autocomplete-types": "^1.23.0",
-        "@zardoy/tsconfig": "^1.5.0",
         "@zardoy/utils": "^0.0.9",
         "@zardoy/vscode-utils": "^0.0.38",
         "esbuild": "^0.15.10",
-        "find-up": "^5",
         "fs-extra": "^10.1.0",
         "jsonc-parser": "^3.2.0",
         "lodash": "^4.17.21",
         "path-browserify": "^1.0.1",
-        "picomatch": "github:silverwind/picomatch#nodeps",
         "typescript": "^4.8.4",
         "vitest": "^0.23.4"
     },

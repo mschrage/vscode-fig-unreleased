@@ -10,6 +10,7 @@ import {
     DiagnosticSeverity,
     Disposable,
     DocumentSelector,
+    EventEmitter,
     ExtensionContext,
     FileType,
     Hover,
@@ -36,7 +37,7 @@ import { compact, ensureArray, findCustomArray } from '@zardoy/utils'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
 import { relative } from 'path-browserify'
-import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons } from './external-utils'
+import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons, urisToDocuments } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
 import { registerShellSupport } from './shellscriptSupport'
 import { registerPackageJsonSupport } from './packageJsonSupport'
@@ -55,7 +56,9 @@ let isScriptExecutionAllowed = false
 
 const registeredLanguageProviders: RegisteredLanguageProvider[] = []
 // these callback will be fired only when language support is added via api AFTER activation
-const registerLanguageSupportListeners: Array<EventCallback<void>> = []
+const languageSupportRegisteredEvent = new EventEmitter<void>()
+const relintEvent = new EventEmitter<TextDocument[] | undefined>()
+const specAddedEvent = new EventEmitter<void>()
 
 export const activate = ({}: ExtensionContext) => {
     isScriptExecutionAllowed = workspace.isTrusted
@@ -77,11 +80,25 @@ export const activate = ({}: ExtensionContext) => {
         /** let other extensions contribute/extend with their completions */
         addCompletionsSpec(rootSubcommand) {
             ALL_LOADED_SPECS.push(rootSubcommand)
+            languageSupportRegisteredEvent.fire()
+            specAddedEvent.fire()
+            // todo highlight refresh
         },
         getCompletionsSpecs() {
             return ALL_LOADED_SPECS
         },
         registerLanguageSupport,
+
+        events: {
+            fire(type, ...args) {
+                switch (type) {
+                    case 'lint':
+                        relintEvent.fire(...args)
+                        break
+                }
+            },
+            onDidChangeSpecs: specAddedEvent.event,
+        },
     }
 
     registerShellSupport(api)
@@ -914,12 +931,29 @@ const figBaseSuggestionToHover = (
     }
 }
 
-type LintProblemType = 'commandName' | 'option' | 'arg'
+const getNotAllowedSpecContextReason = (specName: string, document: TextDocument) => {
+    const defaultReason = "Command can't be used in this context"
+    for (const { isSpecCanBeUsed } of registeredLanguageProviders) {
+        if (!isSpecCanBeUsed) continue
+        try {
+            const specCanBeUsedReason = isSpecCanBeUsed(specName, document.uri)
+            if (specCanBeUsedReason === true) continue
+            if (specCanBeUsedReason === false) {
+                return defaultReason
+            }
+            return specCanBeUsedReason
+        } catch (err) {
+            console.error(err)
+        }
+    }
+}
+
+type LintProblemType = 'commandName' | 'option' | 'noArgInput' | 'commandNotAllowedContext'
 type LintProblem = {
-    // for severity
     type: LintProblemType
     range: [Position, Position]
     message: string
+    code?: string
 }
 
 type CustomCompletionItem = CompletionItem & { shouldBeCached?: boolean }
@@ -957,8 +991,8 @@ const fullCommandParse = (
     collectedData: ParseCollectedData,
     // needs cleanup
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
-    { includeCachedCompletion }: { includeCachedCompletion?: boolean } = {},
-    // these come from API
+    { includeCachedCompletion, includeSpecContextLint }: { includeCachedCompletion?: boolean; includeSpecContextLint?: boolean } = {},
+    // TODO these come from API
     // languageSupportInfo: Pick<RegisterLanguageSupportOptions, ''>
 ): undefined => {
     const inputText = document.getText(inputRange)
@@ -991,18 +1025,18 @@ const fullCommandParse = (
     collectedData.collectedCompletions = []
     collectedData.collectedCompletionsPromise = []
     collectedData.specName = specName
-    const pushCompletions = (getItems: () => CompletionItem[] | undefined) => {
+    const addCompletions = (getItems: () => CompletionItem[] | undefined) => {
         if (parsingReason !== 'completions') return
         collectedData.collectedCompletions!.push(...(getItems() ?? []))
     }
-    const pushPromiseCompletions = (getItems: () => Promise<CompletionItem[]> | undefined) => {
+    const addPromiseCompletions = (getItems: () => Promise<CompletionItem[]> | undefined) => {
         if (parsingReason !== 'completions') return
         const items = getItems()
         if (!items) return
         collectedData.collectedCompletionsPromise!.push(items)
     }
 
-    pushCompletions(() => {
+    addCompletions(() => {
         const textBeforePosition = allParts
             .slice(0, currentPartIndex)
             .map(([content]) => content)
@@ -1024,7 +1058,7 @@ const fullCommandParse = (
     setSemanticType(0, 'command')
     // is in command name
     if (currentPartIndex === 0) {
-        pushCompletions(() => getRootSpecCompletions(documentInfo))
+        addCompletions(() => getRootSpecCompletions(documentInfo))
         if (parsingReason === 'hover') {
             const spec = getCompletingSpec(specName)
             collectedData.currentSubcommand = spec && getFigSubcommand(spec)
@@ -1033,6 +1067,16 @@ const fullCommandParse = (
     }
 
     if (globalSettings.ignoreClis.includes(specName)) return
+    if (parsingReason === 'lint' && includeSpecContextLint) {
+        const notAllowedContextReason = getNotAllowedSpecContextReason(specName, document)
+        if (notAllowedContextReason) {
+            collectedData.lintProblems.push({
+                message: notAllowedContextReason,
+                range: partToRange(0),
+                type: 'commandNotAllowedContext',
+            })
+        }
+    }
     const spec = getCompletingSpec(specName)
     if (!spec) {
         // report commandName lint problem
@@ -1091,7 +1135,12 @@ const fullCommandParse = (
                 goingToSuggest.options = false
                 goingToSuggest.subcommands = false
             }
-            let message: string | undefined
+            let optionProblem:
+                | {
+                      message: string
+                      code: string
+                  }
+                | undefined
             // don't be too annoying for -- and -
             if (!inspectOnlyAllParts || /^--?$/.exec(partContents)) continue
             // todo arg
@@ -1099,8 +1148,12 @@ const fullCommandParse = (
             else setSemanticType(partIndex, 'option')
             if (subcommand.parserDirectives?.optionArgSeparators) continue
             // below: lint option
-            if (!subcommand.options || subcommand.options.length === 0) message = "Command doesn't take options here"
-            else {
+            if (!subcommand.options || subcommand.options.length === 0) {
+                optionProblem = {
+                    message: "Command doesn't take options here",
+                    code: 'noOptionsInput',
+                }
+            } else {
                 // todo what to do with args starting with - or -- ?
                 // todo is varaibid
                 const option = getSubcommandOption(partContents)
@@ -1112,15 +1165,21 @@ const fullCommandParse = (
                             partContents,
                             options.flatMap(({ name }) => ensureArray(name)),
                         )
-                    message = `Unknown option ${partContents}`
-                    if (guessedOptionName) message += ` Did you mean ${guessedOptionName}?`
+                    optionProblem = {
+                        message: `Unknown option ${partContents}`,
+                        code: 'unknownOption',
+                    }
+                    if (guessedOptionName) optionProblem.message += ` Did you mean ${guessedOptionName}?`
                 } else if (alreadyUsedOptions.includes(partContents)) {
-                    message = `${partContents} option was already used [here]`
+                    optionProblem = {
+                        message: `${partContents} option was already used [here]`,
+                        code: 'alreadyUsedOption', // probably should be changed
+                    }
                 }
             }
-            if (message) {
+            if (optionProblem) {
                 collectedData.lintProblems.push({
-                    message,
+                    ...optionProblem,
                     range: partToRange(partIndex),
                     type: 'option',
                 })
@@ -1157,7 +1216,7 @@ const fullCommandParse = (
                 collectedData.lintProblems.push({
                     message: `${subcommand.name} doesn't take argument here`,
                     range: partToRange(partIndex),
-                    type: 'arg',
+                    type: 'noArgInput',
                 })
             }
         }
@@ -1168,7 +1227,7 @@ const fullCommandParse = (
     if (/* !currentPartIsOption */ true) {
         for (const arg of ensureArray(subcommand.args ?? [])) {
             if (!arg.isVariadic && argMetCount !== 0) continue
-            pushPromiseCompletions(() => figArgToCompletions(arg, documentInfo))
+            addPromiseCompletions(() => figArgToCompletions(arg, documentInfo))
             changeCollectedDataPath(arg, currentPartIndex)
             if (!currentPartIsOption) collectedData.argSignatureHelp = arg
             // todo is that right? (stopping at first one)
@@ -1179,9 +1238,9 @@ const fullCommandParse = (
             collectedData.currentSubcommand = subcommands.find(({ name }) => ensureArray(name).includes(currentPartValue))
         }
         if (goingToSuggest.subcommands) {
-            if (subcommands) pushCompletions(() => figSubcommandsToVscodeCompletions(subcommands, documentInfo))
+            if (subcommands) addCompletions(() => figSubcommandsToVscodeCompletions(subcommands, documentInfo))
             if (additionalSuggestions)
-                pushCompletions(() =>
+                addCompletions(() =>
                     compact(
                         additionalSuggestions.map(suggest =>
                             figSuggestionToCompletion(suggest, { ...documentInfo, kind: CompletionItemKind.Event, sortTextPrepend: 'c' }),
@@ -1247,11 +1306,11 @@ const fullCommandParse = (
                     collectedData.collectedCompletions.splice(0, collectedData.collectedCompletions.length)
                     goingToSuggest.options = false
                 }
-                pushPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo))
+                addPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo))
             }
         }
 
-        if (goingToSuggest.options) pushCompletions(() => specOptionsToVscodeCompletions(subcommand, patchedDocumentInfo))
+        if (goingToSuggest.options) addCompletions(() => specOptionsToVscodeCompletions(subcommand, patchedDocumentInfo))
     }
 
     collectedData.collectedCompletionsIncomplete = true
@@ -1334,9 +1393,7 @@ const registerLanguageSupport: API['registerLanguageSupport'] = (selector, optio
     registeredLanguageProviders.push({ selector, ...options, ...featureControl })
     registerLanguageProviders(selector, options, featureControl, disposables)
 
-    for (const callback of registerLanguageSupportListeners) {
-        callback()
-    }
+    languageSupportRegisteredEvent.fire()
 
     return { disposables }
 }
@@ -1585,7 +1642,7 @@ const registerSemanticHighlighting = (
     }
     const semanticLegend = new SemanticTokensLegend(Object.values(tempTokensMap))
 
-    const semanticTokensProviderListeners: Array<() => void> = []
+    const updateHighlightEvent = new EventEmitter<void>()
     const highlightProvider = languages.registerDocumentSemanticTokensProvider(
         documentSelector,
         {
@@ -1606,36 +1663,21 @@ const registerSemanticHighlighting = (
                 const res = builder.build()
                 return res
             },
-            onDidChangeSemanticTokens(listener, _, disposables = []) {
-                semanticTokensProviderListeners.push(listener)
-                return {
-                    dispose() {
-                        Disposable.from(...disposables, {
-                            dispose() {
-                                semanticTokensProviderListeners.splice(semanticTokensProviderListeners.indexOf(listener), 1)
-                            },
-                        })
-                    },
-                }
-            },
+            onDidChangeSemanticTokens: updateHighlightEvent.event,
         },
         semanticLegend,
     )
+    // new spec is added, probably we can provide new highlights for option args etc
+    specAddedEvent.event(() => updateHighlightEvent.fire())
     disposables.push(highlightProvider)
 
     disposables.push(
         workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
             if (affectsConfiguration('figUnreleased.semanticHighlighting') || affectsConfiguration('figUnreleased.ignoreClis')) {
-                for (const semanticTokensProviderListener of semanticTokensProviderListeners) {
-                    semanticTokensProviderListener()
-                }
+                updateHighlightEvent.fire()
             }
         }),
     )
-}
-
-const urisToDocuments = async (uris: Uri[]) => {
-    return await Promise.all(uris.map(uri => workspace.openTextDocument(uri)))
 }
 
 type DocumentEdit = {
@@ -1749,37 +1791,43 @@ const tabsToDocuments = (tabs: readonly Tab[]) => urisToDocuments(compact(tabs.m
 // Each command range can take one line only
 const registerLinter = () => {
     const diagnosticCollection = languages.createDiagnosticCollection(CONTRIBUTION_PREFIX)
+    /** currently included documents into linting, all visible tabs for now */
     let supportedDocuments: TextDocument[] = []
     const doLinting = (document: TextDocument) => {
         if (!getExtensionSetting('validate')) {
             diagnosticCollection.set(document.uri, [])
             return
         }
-        const lintTypeToSettingMap: Partial<Record<LintProblemType, string>> = {
-            commandName: 'commandName',
-            arg: 'noArgInput',
-            option: 'optionName',
-        }
-        const allLintProblems: ParseCollectedData['lintProblems'] = []
         const { getAllSingleLineCommandLocations } = getBestLanguageProvider(document) ?? {}
         if (!getAllSingleLineCommandLocations) return
         const inputRanges = getAllSingleLineCommandLocations(document)
         if (!inputRanges) return
+
+        const lintTypeToSettingMap: Record<LintProblemType, string> = {
+            commandName: 'commandName',
+            noArgInput: 'noArgInput',
+            option: 'optionName',
+            commandNotAllowedContext: 'commandNotAllowedContext',
+        }
+        const lintConfiguration: Record<string, 'ignore' | '' /*don't care of severities*/> =
+            workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint') ?? {}
+
+        const allLintProblems: ParseCollectedData['lintProblems'] = []
         const lintRanges = getAllCommandLocations(document, inputRanges)
         for (const range of lintRanges) {
             if (range.start.isEqual(range.end)) continue
             const collectedData: ParseCollectedData = {}
-            fullCommandParse(document, range, range.start, collectedData, 'lint')
+            fullCommandParse(document, range, range.start, collectedData, 'lint', {
+                includeSpecContextLint: lintConfiguration.commandNotAllowedContext !== 'ignore',
+            })
             const { lintProblems = [] } = collectedData
             allLintProblems.push(...lintProblems)
         }
-        const lintConfiguration: Record<string, string> = workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint') ?? {}
         diagnosticCollection.set(
             document.uri,
             compact(
-                allLintProblems.map(diagnostic => {
-                    const { message, range } = diagnostic
-                    const controlledSettingName = lintTypeToSettingMap[diagnostic.type]
+                allLintProblems.map(({ message, range, type, code }) => {
+                    const controlledSettingName = lintTypeToSettingMap[type]
                     const controlledSettingValue = controlledSettingName && lintConfiguration[controlledSettingName]
                     if (controlledSettingValue === 'ignore') return
                     const severitySettingMap = {
@@ -1793,7 +1841,7 @@ const registerLinter = () => {
                         range: new Range(...range),
                         severity,
                         source: 'fig',
-                        // code
+                        code: code ?? type,
                     }
                 }),
             ),
@@ -1826,7 +1874,10 @@ const registerLinter = () => {
     workspace.onDidChangeConfiguration(({ affectsConfiguration }) => {
         if (['figUnreleased.validate', 'figUnreleased.lint', 'figUnreleased.ignoreClis'].some(key => affectsConfiguration(key))) lintAllDocuments()
     })
-    registerLanguageSupportListeners.push(() => {
+    relintEvent.event((documents = supportedDocuments) => {
+        lintDocuments(documents)
+    })
+    languageSupportRegisteredEvent.event(() => {
         lintAllDocuments()
     })
 }

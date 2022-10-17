@@ -35,6 +35,8 @@ Note that this is the same as manual renaming in explorer, just a quicker way to
 | -------------------------------- | ------------------------------- |
 | ![1](media/before-selection.gif) | ![1](media/after-selection.gif) |
 
+*Command: > Expand Selection*
+
 ### Semantic Highlighting
 
 ![2](media/semantic-highlighting.png)
@@ -46,9 +48,19 @@ Note that this is the same as manual renaming in explorer, just a quicker way to
 Would be disabled by default.
 
 - ideas/problems:
-  - file path validation. Limitation: unknown when its okay to reference file that doesn't exist: generated (or maybe output?)
+  - file path validation. Limitation: unknown when its okay to reference file that doesn't exist: generated (or maybe output file?)
   - some subcommands/commands take any options. Examples: `node build.js --watch`, `webpack serve --mode`
   - arg validation from suggestions
+
+#### Specs From npm Packages
+
+*(only for package.json scripts)*
+
+For some specs we can check wether its npm package is installed. With this you can ensure that command from local package is being used (instead from global one, like `tsc` for example).
+
+![specs-from-npm-packages](./media/specs-from-npm-packages.png)
+
+All rules are configurable and can be disabled individually.
 
 ### Update Paths on File Rename
 
@@ -69,7 +81,3 @@ See more at [./extension-api.md](./extension-api.md)
 Use `npm link` or `pnpm link` with path to your local version of `@withfig/autocomplete` repo.
 
 To start extension, run `pnpm start` and hit F5 in VS Code to start extension debugging.
-
-### TODO
-
-Inline all my deps

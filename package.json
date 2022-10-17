@@ -202,18 +202,21 @@
     ],
     "scripts": {
         "start": "node build.mjs --watch",
-        "build": "node build.mjs",
-        "test": "vitest src/tests.spec.ts --globals",
-        "package": "vsce package --no-dependencies"
+        "build": "tsc && node build.mjs",
+        "unit-test": "vitest src/tests.spec.ts --globals",
+        "package": "vsce package --no-dependencies",
+        "integration-test": "tsc -p test/integration && node testsOut/runTests.js",
+        "integration-test:watch": "chokidar \"test/integration/**\" -c \"pnpm integration-test\" --initial"
     },
     "dependencies": {
         "@types/lodash": "^4.14.186",
         "@types/vscode": "^1.71.0",
-        "@withfig/autocomplete": "^2.422.0",
+        "@withfig/autocomplete": "2.422.0",
         "@withfig/autocomplete-types": "^1.23.0",
         "@zardoy/utils": "^0.0.9",
         "@zardoy/vscode-utils": "^0.0.38",
         "esbuild": "^0.15.10",
+        "escape-string-regexp": "^4",
         "fs-extra": "^10.1.0",
         "jsonc-parser": "^3.2.0",
         "lodash": "^4.17.21",
@@ -238,5 +241,17 @@
         "trailingComma": "all",
         "arrowParens": "avoid",
         "printWidth": 160
+    },
+    "devDependencies": {
+        "@types/chai": "^4.3.3",
+        "@types/fs-extra": "^9.0.13",
+        "@types/glob": "^8.0.0",
+        "@types/mocha": "^10.0.0",
+        "@vscode/test-electron": "^2.1.5",
+        "chai": "^4.3.6",
+        "chokidar-cli": "^3.0.0",
+        "delay": "^5.0.0",
+        "glob": "^8.0.3",
+        "mocha": "^10.0.0"
     }
 }

@@ -117,11 +117,4 @@ describe('parseCommandString', () => {
     testCommandPart('esbuild "v" --allow-overwrite $|', '', 3)
 })
 
-// describe('getDocumentParsedResult', () => {
-
-describe('Real test', () => {
-    test.todo('git switch -b test(arg) test(arg) test(arg)')
-    test.todo('git config test(arg-compl) --global')
-    test.todo('git config --global test(arg-compl)')
-    test.todo('git esbuild (arg) test(arg-compl)')
-})
+// todo add tests for getDocumentParsedResult

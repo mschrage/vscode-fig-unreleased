@@ -1,0 +1,16 @@
+{
+    "extends": "../../tsconfig.json",
+    "compilerOptions": {
+        "outDir": "../../testsOut",
+        "module": "CommonJS",
+        "esModuleInterop": true,
+        "rootDir": ".",
+        "noEmit": false
+    },
+    "include": [
+        "."
+    ],
+    "exclude": [
+        "fixtures"
+    ]
+}

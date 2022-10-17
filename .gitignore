@@ -8,6 +8,7 @@ out
 .next
 .nuxt
 .cache
+testsOut
 
 coverage
 *.lcov
@@ -26,6 +27,3 @@ experiment-*
 .eslintcache
 Thumbs.db
 .idea/
-
-src/generated.ts
-src/configurationTypeCache.json

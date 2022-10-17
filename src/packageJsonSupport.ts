@@ -102,6 +102,7 @@ function isSpecCanBeUsed(specName: string, uri: Uri) {
         depsCachePerUri.set(uri.toString(), null)
         findUpMultiplePackageJson(uri)
             .then(async uris => {
+                if (!uris.length) return
                 for (const parentUri of uris) {
                     // set to null placholder (indicate loading) if still missing data
                     if (!depsCachePerUri.get(parentUri.toString())) depsCachePerUri.set(parentUri.toString(), null)

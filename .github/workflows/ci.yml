@@ -1,0 +1,33 @@
+name: Pull Request
+on:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+      fail-fast: true
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v2
+      - run: npx prettier --check src/**
+      - name: Cache pnpm modules
+        uses: actions/cache@v2
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-
+      - uses: pnpm/action-setup@v2.0.1
+        with:
+          version: latest
+          run_install: |
+            args: [--frozen-lockfile, --strict-peer-dependencies]
+      - run: pnpm lint
+      - run: pnpm unit-test
+      - run: pnpm build
+      - uses: GabrielBB/xvfb-action@v1.6
+        with:
+          run: pnpm integration-test

@@ -220,12 +220,13 @@ const figBaseSuggestionToVscodeCompletion = (
     if (kind) completion.kind = kind
     if (deprecated) completion.tags = [CompletionItemTag.Deprecated]
     if (currentPartValue.trim() && realPos && startPos) {
-        const curPart = allParts[currentPartIndex]
+        // remember, currentPartValue is stripped to current cursor position
+        const currentPartValueFull = allParts[currentPartIndex][0]
         // weird to see after "--
-        // todo
-        // const curStartPos = startPos.translate(0, currentPartOffset)
-        const curStartPos = realPos.translate(0, -curPart[0].replace(/^ /, '').length)
-        const curEndPos = curStartPos.translate(0, curPart[0].length)
+        // todo it should respect seperator option
+        // todo in file paths, it doesn't calculate correctly
+        const curStartPos = realPos.translate(0, -currentPartValue.replace(/^ /, '').length)
+        const curEndPos = curStartPos.translate(0, currentPartValueFull.length)
         completion.range = new Range(curStartPos, rangeShouldReplace ? curEndPos : realPos)
     }
 
@@ -653,9 +654,7 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
 
     completion.insertText ??= insertOption + seperator
 
-    if (!seperator) {
-        addInsertSpaceToCompletion(completion, !!args && ensureArray(args).some(x => !x.isOptional), info)
-    }
+    addInsertSpaceToCompletion(completion, !!args && ensureArray(args).some(x => !x.isOptional), info, !!seperator)
 
     return completion
 }
@@ -672,7 +671,11 @@ const doSuggestFiltering = ({ name, filterStrategy }: Pick<Fig.Subcommand, 'name
     return ensureArray(name).some(x => x.startsWith(currentPartValue))
 }
 
-const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo) => {
+/**
+ * Generally adds on-accept command to completions
+ * When @param onlyCompletionTrigger is true, skips adding space
+ */
+const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean, info: DocumentInfo, onlyCompletionTrigger = false) => {
     const { insertSpace } = globalSettings
     const spaceShouldBeInserted = insertSpace === 'always' || (hasArgs && insertSpace === 'ifSubcommandOrOptionTakeArguments')
     if (!spaceShouldBeInserted) return
@@ -680,14 +683,19 @@ const addInsertSpaceToCompletion = (completion: CompletionItem, hasArgs: boolean
     const nextCharsOffset = info.currentPartOffset + info.currentPartValue.length
     const nextTwoChars = info.inputString.slice(nextCharsOffset, nextCharsOffset + 2)
 
-    const insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
+    let insertSpaceType = nextTwoChars === ' '.repeat(2) ? 'double' : !nextTwoChars.startsWith(' ') ? 'single' : undefined
+    if (onlyCompletionTrigger) {
+        // for triggering completions / parameter hints on accept only
+        insertSpaceType = undefined
+    }
 
     const { insertText } = completion
     if (
-        insertSpaceType &&
-        (typeof insertText !== 'object' ||
-            // for now, there is only {cursor} placeholder
-            !insertText.value.includes('$1'))
+        onlyCompletionTrigger ||
+        (insertSpaceType &&
+            (typeof insertText !== 'object' ||
+                // for now, there is only {cursor} placeholder
+                !insertText.value.includes('$1')))
     ) {
         if (insertSpaceType === 'single') {
             if (typeof insertText === 'object') insertText.value += ' '

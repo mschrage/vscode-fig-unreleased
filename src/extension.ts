@@ -387,33 +387,35 @@ const filterSuggestions = (
     return suggestions.filter(({ name: names }) => ensureArray(names).some(name => filterFn(name ?? '')))
 }
 
-let suggestionsCache:
+// this cache lives between completion triggers
+let tempTriggerCache:
     | {
           document: TextDocument
-          commandStartOffset: number
           allTokensExceptCurrent: string[]
           oldToken: string
-          // suggestions:
+          suggestions: Fig.Suggestion[]
       }
     | undefined
 
-const generatorsCache = new Map<Fig.Generator, { dirPath?: string; updated: number; data: Fig.Suggestion[] }>()
+const generatorsCache = new Map<
+    Fig.Generator,
+    {
+        dirPath?: string
+        updated: number
+        suggestions: Fig.Suggestion[]
+    }
+>()
 
 const figGeneratorScriptToCompletions = async (
     { generators = [], debounce, filterStrategy }: Pick<Fig.Arg, 'debounce' | 'generators' | 'filterStrategy'>,
     info: DocumentInfo,
 ) => {
     if (debounce) return
-    const getStartOffset = () => info._document.offsetAt(info.startPos!)
     const { currentPartIndex, currentPartValue, allParts } = info
-    if (suggestionsCache) {
-        const { document, commandStartOffset, allTokensExceptCurrent } = suggestionsCache
-        if (
-            document !== info._document ||
-            commandStartOffset !== getStartOffset() ||
-            !allParts.filter((_, i) => i !== currentPartIndex).every(([token], i) => allTokensExceptCurrent[i] === token)
-        ) {
-            suggestionsCache = undefined
+    if (tempTriggerCache) {
+        const { document, allTokensExceptCurrent } = tempTriggerCache
+        if (document !== info._document || !allParts.filter((_, i) => i !== currentPartIndex).every(([token], i) => allTokensExceptCurrent[i] === token)) {
+            tempTriggerCache = undefined
         }
     }
     const cwdUri = getCwdUri(info._document)
@@ -455,7 +457,7 @@ const figGeneratorScriptToCompletions = async (
     }
 
     const collectedCompletions: CompletionItem[] = []
-    const addCompletions = (suggestions: Fig.Suggestion[], filterTermUsed: boolean) => {
+    const addSuggestions = (suggestions: Fig.Suggestion[], filterTermUsed: boolean) => {
         collectedCompletions.push(
             ...compact(
                 suggestions.map(suggestion => {
@@ -481,14 +483,29 @@ const figGeneratorScriptToCompletions = async (
             const cacheIsGood =
                 !!cachedGenerator && (!cache.cacheByDirectory || cachedGenerator.dirPath === cwdPath) && Date.now() - cachedGenerator.updated < ttl
             if (cacheIsGood) {
-                addCompletions(cachedGenerator.data, false)
+                addSuggestions(cachedGenerator.suggestions, false)
                 continue
             }
         }
-        if (!suggestionsCache || !trigger || trigger(currentPartValue, suggestionsCache.oldToken)) {
+        let queryTermUsed = false
+        const filterUsingQueryTerm = (suggestions: Fig.Suggestion[]) => {
+            // shouldn't queryTerm also be cached?
+            const queryTerm =
+                typeof getQueryTerm === 'string'
+                    ? getQueryTerm
+                    : getQueryTerm?.(
+                          // todo pass pass that after requiresSeparator
+                          currentPartValue,
+                      )
+            queryTermUsed = queryTerm !== undefined
+            return queryTerm ? filterSuggestions(suggestions, queryTerm, { filterStrategy }) : suggestions
+        }
+        if (tempTriggerCache && trigger && !trigger(currentPartValue, tempTriggerCache.oldToken)) {
+            // todo it seems it doesn't affect script
+            addSuggestions(filterUsingQueryTerm(tempTriggerCache.suggestions), queryTermUsed)
+        } else {
             const prevTokensIncludingPosition = allParts.slice(0, currentPartIndex + 1).map(([token]) => token)
             const locallyCollectedSuggestions: Fig.Suggestion[] = []
-            let queryTermUsed = false
             if (custom) {
                 try {
                     const customSuggestions = await custom(
@@ -503,15 +520,7 @@ const figGeneratorScriptToCompletions = async (
                             currentWorkingDirectory: cwdPath,
                         },
                     )
-                    const queryTerm =
-                        typeof getQueryTerm === 'string'
-                            ? getQueryTerm
-                            : getQueryTerm?.(
-                                  // todo pass pass that after requiresSeparator
-                                  currentPartValue,
-                              )
-                    locallyCollectedSuggestions.push(...(queryTerm ? filterSuggestions(customSuggestions, queryTerm, { filterStrategy }) : customSuggestions))
-                    queryTermUsed = queryTerm !== undefined
+                    locallyCollectedSuggestions.push(...filterUsingQueryTerm(customSuggestions))
                 } catch (err) {
                     console.error(err)
                 }
@@ -550,12 +559,17 @@ const figGeneratorScriptToCompletions = async (
             if (cache) {
                 generatorsCache.set(generator, {
                     updated: Date.now(),
-                    data: locallyCollectedSuggestions,
+                    suggestions: locallyCollectedSuggestions,
                     dirPath: cwdPath,
                 })
             }
-            addCompletions(locallyCollectedSuggestions, queryTermUsed)
-            // suggestionsCache = {}
+            addSuggestions(locallyCollectedSuggestions, queryTermUsed)
+            tempTriggerCache = {
+                document: info._document,
+                allTokensExceptCurrent: [...allParts.slice(0, currentPartIndex), ...allParts.slice(currentPartIndex + 2)].map(([token]) => token),
+                oldToken: currentPartValue,
+                suggestions: locallyCollectedSuggestions,
+            }
         }
     }
     return collectedCompletions
@@ -991,7 +1005,13 @@ const fullCommandParse = (
     collectedData: ParseCollectedData,
     // needs cleanup
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
-    { includeCachedCompletion, includeSpecContextLint }: { includeCachedCompletion?: boolean; includeSpecContextLint?: boolean } = {},
+    {
+        includeCachedCompletion,
+        includeSpecContextLint,
+    }: {
+        includeCachedCompletion?: boolean
+        includeSpecContextLint?: boolean
+    } = {},
     // TODO these come from API
     // languageSupportInfo: Pick<RegisterLanguageSupportOptions, ''>
 ): undefined => {

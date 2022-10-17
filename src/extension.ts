@@ -389,12 +389,12 @@ const filterSuggestions = (
 }
 
 // this cache lives between completion triggers
-let tempTriggerCache:
+let currentTokenEditingCache:
     | {
           document: TextDocument
           allTokensExceptCurrent: string[]
           oldToken: string
-          suggestions: Fig.Suggestion[]
+          dataPerGenerator: Map<Fig.Generator, Fig.Suggestion[]>
       }
     | undefined
 
@@ -413,10 +413,10 @@ const figGeneratorScriptToCompletions = async (
 ) => {
     if (debounce) return
     const { currentPartIndex, currentPartValue, allParts } = info
-    if (tempTriggerCache) {
-        const { document, allTokensExceptCurrent } = tempTriggerCache
+    if (currentTokenEditingCache) {
+        const { document, allTokensExceptCurrent } = currentTokenEditingCache
         if (document !== info._document || !allParts.filter((_, i) => i !== currentPartIndex).every(([token], i) => allTokensExceptCurrent[i] === token)) {
-            tempTriggerCache = undefined
+            currentTokenEditingCache = undefined
         }
     }
     const cwdUri = getCwdUri(info._document)
@@ -501,9 +501,11 @@ const figGeneratorScriptToCompletions = async (
             queryTermUsed = queryTerm !== undefined
             return queryTerm ? filterSuggestions(suggestions, queryTerm, { filterStrategy }) : suggestions
         }
-        if (tempTriggerCache && trigger && !trigger(currentPartValue, tempTriggerCache.oldToken)) {
+        const cacheCanBeUsed = currentTokenEditingCache && trigger && !trigger(currentPartValue, currentTokenEditingCache.oldToken)
+        const generatorCacheData = cacheCanBeUsed && currentTokenEditingCache?.dataPerGenerator.get(generator)
+        if (generatorCacheData) {
             // todo it seems it doesn't affect script
-            addSuggestions(filterUsingQueryTerm(tempTriggerCache.suggestions), queryTermUsed)
+            addSuggestions(filterUsingQueryTerm(generatorCacheData), queryTermUsed)
         } else {
             const prevTokensIncludingPosition = allParts.slice(0, currentPartIndex + 1).map(([token]) => token)
             const locallyCollectedSuggestions: Fig.Suggestion[] = []
@@ -521,7 +523,7 @@ const figGeneratorScriptToCompletions = async (
                             currentWorkingDirectory: cwdPath,
                         },
                     )
-                    locallyCollectedSuggestions.push(...filterUsingQueryTerm(customSuggestions))
+                    locallyCollectedSuggestions.push(...customSuggestions)
                 } catch (err) {
                     console.error(err)
                 }
@@ -557,6 +559,8 @@ const figGeneratorScriptToCompletions = async (
                     console.error(err)
                 }
             }
+            addSuggestions(filterUsingQueryTerm(locallyCollectedSuggestions), queryTermUsed)
+            // cache suggestions
             if (cache) {
                 generatorsCache.set(generator, {
                     updated: Date.now(),
@@ -564,15 +568,19 @@ const figGeneratorScriptToCompletions = async (
                     dirPath: cwdPath,
                 })
             }
-            addSuggestions(locallyCollectedSuggestions, queryTermUsed)
-            tempTriggerCache = {
-                document: info._document,
-                allTokensExceptCurrent: [...allParts.slice(0, currentPartIndex), ...allParts.slice(currentPartIndex + 2)].map(([token]) => token),
-                oldToken: currentPartValue,
-                suggestions: locallyCollectedSuggestions,
+            if (!currentTokenEditingCache) {
+                currentTokenEditingCache = {
+                    document: info._document,
+                    allTokensExceptCurrent: [...allParts.slice(0, currentPartIndex), ...allParts.slice(currentPartIndex + 2)].map(([token]) => token),
+                    oldToken: currentPartValue,
+                    dataPerGenerator: new Map(),
+                }
             }
+            currentTokenEditingCache.dataPerGenerator.set(generator, locallyCollectedSuggestions)
         }
     }
+    // update oldToken even if suggestions were restored from the cache
+    if (currentTokenEditingCache) currentTokenEditingCache.oldToken = currentPartValue
     return collectedCompletions
 }
 
@@ -828,6 +836,7 @@ const getAllCommandsFromString = (inputString: string) => {
     return commandsParts
 }
 
+// todo(codebase) rename part -> token
 interface ParseCommandStringResult {
     allParts: CommandPartTuple[]
     currentPartValue: string
@@ -1447,6 +1456,7 @@ const registerLanguageProviders = (
         ',',
     ]
 
+    /** For now, only files suggestions are being cached here (to avoid fs async call on each keystroke), generators have its own cache */
     const completionsCache: Map<TextDocument, CompletionItem[] | undefined> = new Map()
     const completionProvider = languages.registerCompletionItemProvider(
         documentSelector,

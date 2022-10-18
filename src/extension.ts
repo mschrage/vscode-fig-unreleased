@@ -415,6 +415,7 @@ const figGeneratorScriptToCompletions = async (
     { generators = [], debounce, filterStrategy }: Pick<Fig.Arg, 'debounce' | 'generators' | 'filterStrategy'>,
     info: DocumentInfo,
 ) => {
+    // todo-low it is actually possible to support
     if (debounce) return
     const { currentPartIndex, currentPartValue, allParts } = info
     if (currentTokenEditingCache) {
@@ -423,14 +424,14 @@ const figGeneratorScriptToCompletions = async (
             currentTokenEditingCache = undefined
         }
     }
-    const cwdUri = getCwdUri(info._document)
-    // todo allow custom generators, but without skip cache by dir
-    if (!cwdUri || cwdUri.scheme !== 'file') return
-    const cwdPath = cwdUri.fsPath
-    if (!cwdPath) return
+    const cacheCwdString = Uri.joinPath(info._document.uri, '..').toString()
+
+    const execCwdUri = getCwdUri(info._document)
+    const cwdPath = !execCwdUri || execCwdUri.scheme !== 'file' ? undefined : execCwdUri.fsPath
     const executeShellCommandShared = (commandToExecute: string) => {
         try {
             if (!globalSettings.scriptEnable || !isScriptExecutionAllowed) throw new Error('Script execution is not enabled')
+            if (!cwdPath) throw new Error('No valid cwd for file')
             const { scriptAllowList } = globalSettings
             if (scriptAllowList.length) {
                 // use simplified parsing for performance reasons
@@ -486,7 +487,7 @@ const figGeneratorScriptToCompletions = async (
             const cachedGenerator = generatorsCache.get(generator)
             const { ttl = 3600 } = cache
             const cacheIsGood =
-                !!cachedGenerator && (!cache.cacheByDirectory || cachedGenerator.dirPath === cwdPath) && Date.now() - cachedGenerator.updated < ttl
+                !!cachedGenerator && (!cache.cacheByDirectory || cachedGenerator.dirPath === cacheCwdString) && Date.now() - cachedGenerator.updated < ttl
             if (cacheIsGood) {
                 addSuggestions(cachedGenerator.suggestions, false)
                 continue
@@ -524,7 +525,8 @@ const figGeneratorScriptToCompletions = async (
                         {
                             currentProcess: '',
                             sshPrefix: '',
-                            currentWorkingDirectory: cwdPath,
+                            // todo-low ensure it's fully ok
+                            currentWorkingDirectory: cwdPath ?? '',
                         },
                     )
                     locallyCollectedSuggestions.push(...customSuggestions)
@@ -569,7 +571,7 @@ const figGeneratorScriptToCompletions = async (
                 generatorsCache.set(generator, {
                     updated: Date.now(),
                     suggestions: locallyCollectedSuggestions,
-                    dirPath: cwdPath,
+                    dirPath: cacheCwdString,
                 })
             }
             if (!currentTokenEditingCache) {

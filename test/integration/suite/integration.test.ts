@@ -137,7 +137,7 @@ describe('e2e', () => {
     it('only option arg suggestions', async () => {
         await resetDocument('yarn --emoji ')
         const completions = await getCompletionsSorted()
-        expect(completions.map(({ label }) => (label as CompletionItemLabel).label)).to.equal(['false', 'true'])
+        expect(completions.map(({ label }) => (label as CompletionItemLabel).label)).to.deep.equal(['false', 'true'])
     })
 
     // todo
@@ -227,7 +227,7 @@ describe('e2e', () => {
         })
     }
 
-    describe.only('linting', () => {
+    describe('linting', () => {
         // testDiagnostics('|esint| --cache', ['Unknown command esint'])
         testDiagnostics('pnpm build |--prod|', ["Command doesn't take options here"])
         testDiagnostics('base64 |something|', ["base64 doesn't take argument here"])

@@ -74,7 +74,7 @@ describe('e2e', () => {
     }
     const triggerSuggest = async (addDelay: boolean) => {
         await commands.executeCommand('editor.action.triggerSuggest')
-        if (addDelay) await delay(500)
+        if (addDelay) await delay((process as any).env.CI ? 800 : 500)
     }
     const acceptSuggest = () => commands.executeCommand('acceptSelectedSuggestion')
 
@@ -113,7 +113,8 @@ describe('e2e', () => {
         expect(getCommandText()).to.equal('eslint --bundle')
     })
 
-    it('esbuild --target option: seperator & generator', async () => {
+    it('esbuild --target option: seperator & generator', async function () {
+        this.timeout(6000)
         await resetDocument('esbuild --target')
         await triggerSuggest(true)
         await acceptSuggest()

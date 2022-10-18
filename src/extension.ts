@@ -651,7 +651,8 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
     const optionsRender = currentOptionsArr.join(', ')
     const completion = figBaseSuggestionToVscodeCompletion(option, optionsRender, { ...info, sortTextPrepend: 'd', assignGlobalCompletionIcon: true })
     if (!completion) return
-    ;(completion.label as CompletionItemLabel).detail = isRequired ? 'REQUIRED' : getArgPreviewFromOption(option)
+    ;(completion.label as CompletionItemLabel).detail = getArgPreviewFromOption(option)
+    if (isRequired) (completion.label as CompletionItemLabel).description = 'REQUIRED'
 
     const typedOption = info.currentPartValue ?? ''
     const insertOption = Array.isArray(option.name)
@@ -753,7 +754,9 @@ const getArgPreviewFromOption = ({ args }: Fig.Option) => {
     const argsPreview =
         args &&
         ensureArray(args)
-            .map(({ name }) => name)
+            .map(({ name, isOptional }) => {
+                return isOptional ? `[${name}]` : `<${name}>`
+            })
             .filter(name => name?.trim())
             .join(' ')
     if (!argsPreview) return

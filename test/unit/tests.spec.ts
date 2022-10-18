@@ -1,34 +1,10 @@
 /// <reference types="vitest/globals" />
 
-vi.mock('vscode', () => ({
-    commands: {
-        registerCommand() {},
-    },
-    languages: new Proxy(
-        {},
-        {
-            get(target, p, receiver) {
-                return () => {}
-            },
-        },
-    ),
-    workspace: {
-        registerFileSystemProvider() {},
-        onDidRenameFiles() {},
-    },
-    window: {
-        onDidChangeTextEditorSelection() {},
-        onDidChangeActiveTextEditor() {},
-    },
-    SemanticTokensLegend: class {},
-}))
+import './mockVscode'
 
 vi.mock('FIG_ALL_SPECS', () => ({ default: [] }))
 
-globalThis.trackDisposable = a => a
-globalThis.__TEST = true
-
-import { parseCommandString } from './extension'
+import { parseCommandString } from '../../src/extension'
 
 const stringWithPositions = (contents: string) => {
     const cursorPositions = {} as Record<'$' | '|', number>

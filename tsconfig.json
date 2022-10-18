@@ -19,6 +19,8 @@
         "types": []
     },
     "include": [
-        "src"
+        "src",
+        // include for typechecking
+        "test/unit"
     ]
 }

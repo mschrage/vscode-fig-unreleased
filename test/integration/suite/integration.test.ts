@@ -50,9 +50,9 @@ describe('e2e', () => {
         editor = window.activeTextEditor!
         document = editor.document
         startContent = document.getText()
-        await delay(500)
+        await delay(200)
         await commands.executeCommand('vscode.executeCompletionItemProvider', document.uri, initialPos)
-        await delay(800)
+        await delay(300)
     })
 
     const resetDocument = async (startCommand: string) => {
@@ -213,7 +213,7 @@ describe('e2e', () => {
             const renamingExpectedFile = Uri.joinPath(document.uri, '../build.mjs')
             await getConfig().update('updatePathsOnFileRename', 'always', ConfigurationTarget.Global)
             await workspace.fs.writeFile(renamingFile, new TextEncoder().encode(''))
-            await resetDocument('node start.mjs')
+            await resetDocument('echo start.mjs && node start.mjs')
             const edit = new WorkspaceEdit()
             edit.renameFile(renamingFile, renamingExpectedFile)
             // todo extract to util like waitForEditorChanges
@@ -224,7 +224,7 @@ describe('e2e', () => {
                     dispose()
                 })
             })
-            expect(getCommandText()).to.equal('node build.mjs')
+            expect(getCommandText()).to.equal('echo start.mjs && node build.mjs')
         })
     })
 })

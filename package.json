@@ -203,7 +203,7 @@
     "scripts": {
         "start": "node build.mjs --watch",
         "build": "tsc && node build.mjs",
-        "unit-test": "vitest src/tests.spec.ts --globals",
+        "unit-test": "vitest --globals --dir test/unit",
         "package": "vsce package --no-dependencies",
         "integration-test": "tsc -p test/integration && node testsOut/runTests.js",
         "integration-test:watch": "chokidar \"test/integration/**\" -c \"pnpm integration-test\" --initial"

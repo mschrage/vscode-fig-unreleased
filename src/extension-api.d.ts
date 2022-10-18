@@ -15,6 +15,11 @@ export interface CompletionAdditionalOptions {
     // proposePackage: string
 }
 
+export interface CustomCompletionItem extends vsc.CompletionItem {
+    /** Use this check instead of kind == file as options can also be file kind to make icon look nice */
+    isFileCompletion?: boolean
+}
+
 /** Here you can override speficic feature (or provider) enablement / behavior */
 export interface FeatureControl {
     /**
@@ -28,7 +33,7 @@ export interface FeatureControl {
     enableCompletionProvider?:
         | boolean
         | {
-              processCompletions?(completion: vsc.CompletionItem[], info: { specName: string }): vsc.CompletionItem[]
+              processCompletions?(completion: CustomCompletionItem[], info: { specName: string }): vsc.CompletionItem[]
           }
 }
 

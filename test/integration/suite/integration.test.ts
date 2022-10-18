@@ -149,6 +149,7 @@ describe('e2e', () => {
         })
     }
 
+    // todo test file / generator caching
     // todo test hover range
 
     describe('Suite cases', () => {

@@ -18,11 +18,14 @@ import {
     LocationLink,
     MarkdownString,
     Position,
+    ProgressLocation,
+    QuickPickItem,
     Range,
     SelectionRange,
     SemanticTokensBuilder,
     SemanticTokensLegend,
     SnippetString,
+    SnippetTextEdit,
     Tab,
     TabInputText,
     TextDocument,
@@ -32,12 +35,13 @@ import {
     workspace,
     WorkspaceEdit,
 } from 'vscode'
-import { API, RegisterLanguageSupportOptions, FeatureControl } from './extension-api'
+import { API, RegisterLanguageSupportOptions, FeatureControl, CustomCompletionItem } from './extension-api'
 import { compact, ensureArray, findCustomArray } from '@zardoy/utils'
+import { markdownToTxt } from 'markdown-to-txt'
 import { parse } from './shell-quote-patched'
 import _ from 'lodash'
 import { relative } from 'path-browserify'
-import { niceLookingCompletion, oneOf, prepareNiceLookingCompletinons, urisToDocuments } from './external-utils'
+import { getCompletionLabelName, niceLookingCompletion, oneOf, prepareNiceLookingCompletinons, urisToDocuments } from './external-utils'
 import { specGlobalIconMap, stringIconMap } from './customDataMaps'
 import { registerShellSupport } from './shellscriptSupport'
 import { registerPackageJsonSupport } from './packageJsonSupport'
@@ -141,7 +145,7 @@ type CommandsParts = Array<{ parts: CommandPartParseTuple[]; start: number; op: 
 // todo resolve sorting!
 interface DocumentInfo extends ParseCommandStringResult {
     // used for providing correct editing range
-    includeCached: boolean
+    includeFileCompletions: boolean
     realPos: Position | undefined
     startPos: Position | undefined
     specName: string
@@ -372,7 +376,7 @@ const figSuggestionToCompletion = (
                 : undefined,
             // todo-low
             range: realPos && new Range(realPos.translate(0, -pathLastPart.replace(/^ /, '').length), realPos),
-            shouldBeCached: true,
+            isFileCompletion: true,
         } as CustomCompletionItem)
     }
     return completion
@@ -609,7 +613,7 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
             ),
         )
     }
-    if (!documentInfo.includeCached) {
+    if (!documentInfo.includeFileCompletions) {
         completions.push(...(await templateOrGeneratorsToCompletion(arg, documentInfo)))
     }
     completions.push(...((await figGeneratorScriptToCompletions(arg, documentInfo)) ?? []))
@@ -907,7 +911,7 @@ const getDocumentParsedResult = (
     realPos: Position,
     cursorStringOffset: number,
     startPos: Position,
-    options: { stripCurrentValue: boolean; includeCached: boolean },
+    options: { stripCurrentValue: boolean; includeFileCompletions: boolean },
 ): DocumentInfo | undefined => {
     const parseCommandResult = parseCommandString(stringContents, cursorStringOffset, options.stripCurrentValue)
     if (!parseCommandResult) return
@@ -934,7 +938,7 @@ const getDocumentParsedResult = (
         currentPartOffset,
         currentPartIndex,
         allParts,
-        includeCached: options.includeCached,
+        includeFileCompletions: options.includeFileCompletions,
         currentPartIsOption,
         parsedInfo: {
             completingOptionValue: previousPartIsOptionWithArg
@@ -987,8 +991,6 @@ type LintProblem = {
     code?: string
 }
 
-type CustomCompletionItem = CompletionItem & { shouldBeCached?: boolean }
-
 // can also be refactored to try/finally instead, but d require extra indent
 interface ParseCollectedData {
     specName?: string
@@ -1023,10 +1025,10 @@ const fullCommandParse = (
     // needs cleanup
     parsingReason: 'completions' | 'signatureHelp' | 'hover' | 'lint' | 'pathParts' | 'semanticHighlight',
     {
-        includeCachedCompletion,
+        includeFileCompletions,
         includeSpecContextLint,
     }: {
-        includeCachedCompletion?: boolean
+        includeFileCompletions?: boolean
         includeSpecContextLint?: boolean
     } = {},
     // TODO these come from API
@@ -1037,7 +1039,7 @@ const fullCommandParse = (
     const stringPos = _position.character - startPos.character
     const documentInfo = getDocumentParsedResult(document, inputText, _position, stringPos, startPos, {
         stripCurrentValue: parsingReason === 'completions',
-        includeCached: includeCachedCompletion ?? false,
+        includeFileCompletions: includeFileCompletions ?? false,
     })
     if (!documentInfo) return
     let { specName, allParts, currentPartValue, currentPartIndex, currentPartIsOption } = documentInfo
@@ -1389,6 +1391,66 @@ const registerCommands = () => {
         if (oneOf(globalSettings.autoParameterHints, 'afterSuggestionSelect', 'afterSpace')) commands.executeCommand('editor.action.triggerSuggest')
         commands.executeCommand('editor.action.triggerParameterHints')
     })
+
+    commands.registerTextEditorCommand('figUnreleased.descriptionSearch', async editor => {
+        const { document, selection } = editor
+        const position = selection.active
+
+        const { provideSingleLineRangeFromPosition } = getBestLanguageProvider(document) ?? {}
+        if (!provideSingleLineRangeFromPosition) return
+        const commandRange = await provideSingleLineRangeFromPosition(document, position)
+        if (!commandRange) return
+
+        const collectedData: ParseCollectedData = {}
+        fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeFileCompletions: false })
+        const { collectedCompletions = [], collectedCompletionsPromise = [], collectedCompletionsIncomplete } = collectedData
+        const completionsFromPromise = await window.withProgress<CustomCompletionItem[][]>(
+            {
+                location: ProgressLocation.Window,
+                title: 'Getting fresh completions...',
+            },
+            async () => {
+                return await Promise.all(collectedCompletionsPromise)
+            },
+        )
+        const completions = _.sortBy([...collectedCompletions, ...completionsFromPromise.flat(1)], ({ sortText }) => sortText)
+        const selectedItem = await window.showQuickPick<QuickPickItem & { completion: CompletionItem }>(
+            completions.map(completion => {
+                let { label: _label, documentation = '' } = completion
+                if (typeof documentation === 'object') documentation = markdownToTxt(documentation.value)
+                const { label, detail }: CompletionItemLabel = typeof _label === 'object' ? _label : { label: _label }
+                return {
+                    label,
+                    description: detail,
+                    detail: documentation,
+                    completion,
+                }
+            }),
+            {
+                title: 'Description Search',
+                matchOnDescription: true,
+                matchOnDetail: true,
+            },
+        )
+        if (!selectedItem) return
+        const { completion } = selectedItem
+        // note: doesn't work with multiselection
+        const edit = new WorkspaceEdit()
+        const insertText = completion.insertText ?? getCompletionLabelName(completion)
+        const range = (completion.range as Range | undefined) ?? document.getWordRangeAtPosition(position) ?? new Range(position, position)
+        edit.set(document.uri, [
+            typeof insertText === 'object'
+                ? ({
+                      range,
+                      snippet: insertText,
+                  } as SnippetTextEdit)
+                : ({
+                      range,
+                      newText: insertText,
+                  } as TextEdit),
+        ])
+        await workspace.applyEdit(edit)
+    })
 }
 
 const initSettings = () => {
@@ -1465,28 +1527,28 @@ const registerLanguageProviders = (
                 const { enableCompletionProvider } = featureControl
                 if (enableCompletionProvider === false) return
 
-                let cachedCompletions: CompletionItem[] | undefined
+                let cachedFileCompletions: CompletionItem[] | undefined
                 if (context.triggerKind === CompletionTriggerKind.TriggerForIncompleteCompletions) {
-                    cachedCompletions = completionsCache.get(document)
+                    cachedFileCompletions = completionsCache.get(document)
                 }
 
                 const commandRange = await provideSingleLineRangeFromPosition(document, position)
                 if (!commandRange) return
                 const collectedData: ParseCollectedData = {}
-                fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeCachedCompletion: !!cachedCompletions })
+                fullCommandParse(document, commandRange, position, collectedData, 'completions', { includeFileCompletions: !!cachedFileCompletions })
                 const { collectedCompletions = [], collectedCompletionsPromise = [], collectedCompletionsIncomplete } = collectedData
                 const completionsFromPromise = await Promise.all(collectedCompletionsPromise)
                 const completions = [...collectedCompletions, ...completionsFromPromise.flat(1)]
 
-                if (!cachedCompletions) {
+                if (!cachedFileCompletions) {
                     completionsCache.set(
                         document,
-                        completions.filter(({ shouldBeCached }) => shouldBeCached),
+                        completions.filter(({ isFileCompletion: isFileSuggestion }) => isFileSuggestion),
                     )
                 }
                 const processCompletions = (typeof enableCompletionProvider === 'object' && enableCompletionProvider.processCompletions) || (x => x)
                 return {
-                    items: processCompletions([...completions, ...(cachedCompletions ?? [])], { specName: collectedData.specName! }),
+                    items: processCompletions([...completions, ...(cachedFileCompletions ?? [])], { specName: collectedData.specName! }),
                     isIncomplete: collectedCompletionsIncomplete,
                 }
             },

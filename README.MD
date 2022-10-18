@@ -66,6 +66,12 @@ All rules are configurable and can be disabled individually.
 
 ![1](media/auto-rename-paths.gif)
 
+### Description Search
+
+There is a command: *> Fig Unreleased: Description Search* that lets you to search option by its description.
+
+![description-search](media/description-search.png)
+
 ## API
 
 This extension supports API, which you can use to:

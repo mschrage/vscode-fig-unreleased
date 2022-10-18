@@ -6,7 +6,7 @@ specifiers:
   '@types/glob': ^8.0.0
   '@types/lodash': ^4.14.186
   '@types/mocha': ^10.0.0
-  '@types/vscode': ^1.71.0
+  '@types/vscode': ^1.72.0
   '@vscode/test-electron': ^2.1.5
   '@withfig/autocomplete': 2.422.0
   '@withfig/autocomplete-types': ^1.23.0
@@ -21,6 +21,7 @@ specifiers:
   glob: ^8.0.3
   jsonc-parser: ^3.2.0
   lodash: ^4.17.21
+  markdown-to-txt: ^2.0.1
   mocha: ^10.0.0
   path-browserify: ^1.0.1
   typescript: ^4.8.4
@@ -28,16 +29,17 @@ specifiers:
 
 dependencies:
   '@types/lodash': 4.14.186
-  '@types/vscode': 1.71.0
+  '@types/vscode': 1.72.0
   '@withfig/autocomplete': 2.422.0
   '@withfig/autocomplete-types': 1.23.0
   '@zardoy/utils': 0.0.9
-  '@zardoy/vscode-utils': 0.0.38_vrchtwlyqg5nrebapgwis4gtn4
+  '@zardoy/vscode-utils': 0.0.38_a7gglbq4cupmxq4f6y3iruecu4
   esbuild: 0.15.10
   escape-string-regexp: 4.0.0
   fs-extra: 10.1.0
   jsonc-parser: 3.2.0
   lodash: 4.17.21
+  markdown-to-txt: 2.0.1
   path-browserify: 1.0.1
   typescript: 4.8.4
   vitest: 0.23.4
@@ -154,8 +156,8 @@ packages:
   /@types/node/18.8.1:
     resolution: {integrity: sha512-vuYaNuEIbOYLTLUAJh50ezEbvxrD43iby+lpUA2aa148Nh5kX/AVO/9m1Ahmbux2iU5uxJTNF9g2Y+31uml7RQ==}
 
-  /@types/vscode/1.71.0:
-    resolution: {integrity: sha512-nB50bBC9H/x2CpwW9FzRRRDrTZ7G0/POttJojvN/LiVfzTGfLyQIje1L1QRMdFXK9G41k5UJN/1B9S4of7CSzA==}
+  /@types/vscode/1.72.0:
+    resolution: {integrity: sha512-WvHluhUo+lQvE3I4wUagRpnkHuysB4qSyOQUyIAS9n9PYMJjepzTUD8Jyks0YeXoPD0UGctjqp2u84/b3v6Ydw==}
     dev: false
 
   /@ungap/promise-all-settled/1.1.2:
@@ -208,7 +210,7 @@ packages:
       type-fest: 2.19.0
     dev: false
 
-  /@zardoy/vscode-utils/0.0.38_vrchtwlyqg5nrebapgwis4gtn4:
+  /@zardoy/vscode-utils/0.0.38_a7gglbq4cupmxq4f6y3iruecu4:
     resolution: {integrity: sha512-nlw4hoRkrRwHJbLR0FtrztN1P92E9coZfLSv7NNyPPmDNmnyxAUXblDZsY5OSUVkxCsMBHNxSEHZuhcddOj17A==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
     hasBin: true
@@ -228,7 +230,7 @@ packages:
       vscode-framework:
         optional: true
     dependencies:
-      '@types/vscode': 1.71.0
+      '@types/vscode': 1.72.0
       '@zardoy/utils': 0.0.4
       chokidar: 3.5.3
       commander: 9.4.1
@@ -1155,8 +1157,16 @@ packages:
     resolution: {integrity: sha512-FT1yDzDYEoYWhnSGnpE/4Kj1fLZkDFyqRb7fNt6FdYOSxlUWAtp42Eh6Wb0rGIv/m9Bgo7x4GhQbm5Ys4SG5ow==}
     dev: true
 
+  /lodash.escape/4.0.1:
+    resolution: {integrity: sha512-nXEOnb/jK9g0DYMr1/Xvq6l5xMD7GDG55+GSYIYmS0G4tBk/hURD4JR9WCavs04t33WmJx9kCyp9vJ+mr4BOUw==}
+    dev: false
+
   /lodash.throttle/4.1.1:
     resolution: {integrity: sha512-wIkUCfVKpVsWo3JSZlc+8MB5it+2AN5W8J7YVMST30UrvcQNZ1Okbj+rbVniijTWE6FGYy4XJq/rHkas8qJMLQ==}
+
+  /lodash.unescape/4.0.1:
+    resolution: {integrity: sha512-DhhGRshNS1aX6s5YdBE3njCCouPgnG29ebyHvImlZzXZf2SHgt+J08DHgytTPnpywNbO1Y8mNUFyQuIDBq2JZg==}
+    dev: false
 
   /lodash/4.17.21:
     resolution: {integrity: sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==}
@@ -1186,6 +1196,20 @@ packages:
     engines: {node: '>=10'}
     dependencies:
       yallist: 4.0.0
+    dev: false
+
+  /markdown-to-txt/2.0.1:
+    resolution: {integrity: sha512-Hsj7KTN8k1gutlLum3vosHwVZGnv8/cbYKWVkUyo/D1rzOYddbDesILebRfOsaVfjIBJank/AVOySBlHAYqfZw==}
+    dependencies:
+      lodash.escape: 4.0.1
+      lodash.unescape: 4.0.1
+      marked: 4.1.1
+    dev: false
+
+  /marked/4.1.1:
+    resolution: {integrity: sha512-0cNMnTcUJPxbA6uWmCmjWz4NJRe/0Xfk2NhXCUHjew9qJzFN20krFnsUe7QynwqOwa5m1fZ4UDg0ycKFVC0ccw==}
+    engines: {node: '>= 12'}
+    hasBin: true
     dev: false
 
   /merge-stream/2.0.0:

@@ -18,6 +18,7 @@ export interface CompletionAdditionalOptions {
 export interface CustomCompletionItem extends vsc.CompletionItem {
     /** Use this check instead of kind == file as options can also be file kind to make icon look nice */
     isFileCompletion?: boolean
+    completionType?: 'command' | 'arg' | 'subcommand' | 'option' | 'option-arg' | 'mixin' | 'shortcut'
 }
 
 /** Here you can override speficic feature (or provider) enablement / behavior */

@@ -203,7 +203,7 @@ const figBaseSuggestionToVscodeCompletion = (
         rangeShouldReplace = true,
         assignGlobalCompletionIcon,
     }: DocumentInfoForCompl & { sortTextPrepend: string; assignGlobalCompletionIcon?: boolean },
-): CompletionItem | undefined => {
+): CustomCompletionItem | undefined => {
     const { displayName, insertValue, description, icon, priority = 50, hidden, deprecated } = baseCompetion
 
     if (hidden && currentPartValue !== initialName) return undefined
@@ -257,6 +257,7 @@ const getRootSpecCompletions = (info: Omit<DocumentInfoForCompl, 'sortTextPrepen
                 assignGlobalCompletionIcon: true,
             })
             if (!completion) return
+            completion.completionType = 'command'
             if (!completion.kind) Object.assign(completion, niceLookingCompletion('.sh'))
             return completion
         }),
@@ -312,6 +313,7 @@ const figSubcommandsToVscodeCompletions = (subcommands: Fig.Subcommand[], info: 
                 sortTextPrepend: 'c',
             })
             if (!completion) return
+            completion.completionType = 'subcommand'
             // todo use the same logic from options
             completion.insertText = nameArr.find(name => name.toLowerCase().includes(currentPartValue.toLowerCase())) ?? nameArr[0]
             let insertSpace = subcommand.requiresSubcommand
@@ -587,7 +589,7 @@ const figGeneratorScriptToCompletions = async (
 }
 
 // option or subcommand arg
-const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => {
+const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo, isFromOption = false) => {
     const completions: (CompletionItem | undefined)[] = []
     // does it make sense to support it here?
     if (arg.suggestCurrentToken)
@@ -622,7 +624,14 @@ const figArgToCompletions = async (arg: Fig.Arg, documentInfo: DocumentInfo) => 
             if (completion.label.label === defaultValue) completion.label.description = 'DEFAULT'
         }
     }
-    return compact(completions)
+    return compact(
+        completions.map(
+            (completion): CustomCompletionItem => ({
+                ...(completion as CustomCompletionItem),
+                completionType: isFromOption ? 'option-arg' : 'arg',
+            }),
+        ),
+    )
 }
 
 // imo specOptions is more memorizable rather than commandOptions
@@ -651,6 +660,7 @@ const parseOptionToCompletion = (option: Fig.Option, info: DocumentInfo): Comple
     const optionsRender = currentOptionsArr.join(', ')
     const completion = figBaseSuggestionToVscodeCompletion(option, optionsRender, { ...info, sortTextPrepend: 'd', assignGlobalCompletionIcon: true })
     if (!completion) return
+    completion.completionType = 'option'
     ;(completion.label as CompletionItemLabel).detail = getArgPreviewFromOption(option)
     if (isRequired) (completion.label as CompletionItemLabel).description = 'REQUIRED'
 
@@ -1377,7 +1387,7 @@ const fullCommandParse = (
                     collectedData.collectedCompletionsPromise.splice(0, collectedData.collectedCompletionsPromise.length)
                     goingToSuggest.options = false
                 }
-                addPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo))
+                addPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo, true))
             }
         }
 
@@ -1451,7 +1461,9 @@ const registerCommands = () => {
             completions.map(completion => {
                 let { label: _label, documentation = '' } = completion
                 if (typeof documentation === 'object') documentation = markdownToTxt(documentation.value)
-                const { label, detail }: CompletionItemLabel = typeof _label === 'object' ? _label : { label: _label }
+                let { label, detail }: CompletionItemLabel = typeof _label === 'object' ? _label : { label: _label }
+                const kindStr = CompletionItemKind[completion.kind ?? CompletionItemKind.Property]?.toLowerCase()
+                if (kindStr) label = `$(symbol-${kindStr}) ${label}`
                 return {
                     label,
                     description: detail,

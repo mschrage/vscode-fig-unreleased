@@ -1133,17 +1133,18 @@ const fullCommandParse = (
             !!template && ensureArray(template).filter(templ => oneOf(templ, 'folders', 'filepaths')).length > 0
         return isPathTemplate(arg) || ensureArray(arg.generators ?? []).some(gen => isPathTemplate(gen))
     }
-    const changeCollectedDataPath = (arg: Fig.Arg, i: number) => {
-        const part = allParts[i]
-        // todo duplication
-        collectedData.currentFilePathPart = getIsPathPart(arg) ? [...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(i)))] : undefined
+    function getFilePathPart(partIndex: number): [string, number, boolean, Range] {
+        const part = allParts[partIndex]
+        return [...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(partIndex)))]
+    }
+    const updateCurrentFilePath = (arg: Fig.Arg, i: number) => {
+        collectedData.currentFilePathPart = getIsPathPart(arg) ? getFilePathPart(i) : undefined
     }
     const addPossiblyPathPart = (i: number, args: Fig.Arg[] | Fig.Arg | undefined) => {
         if (!args) return
         const isPathPart = ensureArray(args).some(arg => getIsPathPart(arg))
         if (!isPathPart) return
-        const part = allParts[i]
-        collectedData.filePathParts!.push([...part, new Range(...fixPathArgRange(inputText, part[1], partToRange(i)))])
+        collectedData.filePathParts!.push(getFilePathPart(i))
     }
 
     const { completingOptionValue: completingParamValue, completingOptionFull } = documentInfo.parsedInfo
@@ -1265,7 +1266,7 @@ const fullCommandParse = (
         for (const arg of ensureArray(subcommand.args ?? [])) {
             if (!arg.isVariadic && argMetCount !== 0) continue
             addPromiseCompletions(() => figArgToCompletions(arg, documentInfo))
-            changeCollectedDataPath(arg, currentPartIndex)
+            updateCurrentFilePath(arg, currentPartIndex)
             if (!currentPartIsOption) collectedData.argSignatureHelp = arg
             // todo is that right? (stopping at first one)
             break
@@ -1294,7 +1295,6 @@ const fullCommandParse = (
         // todo maybe use sep-all optm?
         let patchedDocumentInfo = documentInfo
         // todo1 refactor to forof
-        // parserDirectives?
         const { usedOptions } = documentInfo
         const optionWithSep = findCustomArray(options, ({ requiresSeparator, name }) => {
             if (!requiresSeparator) return
@@ -1320,7 +1320,6 @@ const fullCommandParse = (
             currentOptionValue?.[0] ?? completingParamValue?.paramName ?? (commandPartIsOption(currentPartValue) ? currentPartValue : undefined)
         if (optionWithSep) goingToSuggest.options = false
         if (completingParamName) collectedData.currentOption = options.find(specOption => ensureArray(specOption.name).includes(completingParamName))
-        // todo git config --global
         if (completingOptionFull) {
             const [optionIndex, argIndex] = completingOptionFull
             const optionHasArg = !!getSubcommandOption(allParts[optionIndex][0])?.args
@@ -1333,10 +1332,10 @@ const fullCommandParse = (
             const completingOption = getSubcommandOption(currentOptionValue[0])
             let { args } = completingOption ?? {}
             // todo
-            let arg = Array.isArray(args) ? args[0] : args
+            const arg = Array.isArray(args) ? args[0] : args
             if (arg) {
                 collectedData.argSignatureHelp = arg
-                changeCollectedDataPath(arg, currentPartIndex)
+                updateCurrentFilePath(arg, currentPartIndex)
                 if (!arg.isOptional) {
                     // make sure only arg completions are showed
                     // todo r

@@ -1602,7 +1602,7 @@ const registerLanguageProviders = (
     })
     disposables.push(defProvider)
 
-    if (disableProviders.includes('rename')) {
+    if (!disableProviders.includes('rename')) {
         const renameProvider = languages.registerRenameProvider(documentSelector, {
             async prepareRename(document, position, token) {
                 const { range, fileExists } = (await getFilePathPart({ document, position }, true)) ?? {}

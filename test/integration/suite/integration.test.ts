@@ -4,6 +4,7 @@ import {
     ConfigurationTarget,
     Hover,
     languages,
+    LocationLink,
     Position,
     Range,
     Selection,
@@ -55,14 +56,19 @@ describe('e2e', () => {
         await delay(300)
     })
 
+    const stringPos = (offset: number) => initialPos.translate(0, offset)
+    const linePos = () => document.lineAt(initialPos)
+    const setCursorPos = (position: Position) => {
+        editor.selection = new Selection(position, position)
+    }
+
     const resetDocument = async (startCommand: string) => {
         const insertOffset = document.offsetAt(initialPos)
         await clearEditorText(editor, startContent.slice(0, insertOffset) + startCommand + startContent.slice(insertOffset))
-        const selectPos = initialPos.translate(0, startCommand.length)
-        editor.selection = new Selection(selectPos, selectPos)
+        setCursorPos(initialPos.translate(0, startCommand.length))
     }
     const getCommandText = () => {
-        const lineEnd = document.lineAt(initialPos).range.end
+        const lineEnd = linePos().range.end
         return document.getText(new Range(initialPos, lineEnd.translate(0, -1)))
     }
     const triggerSuggest = async (addDelay: boolean) => {
@@ -71,7 +77,7 @@ describe('e2e', () => {
     }
     const acceptSuggest = () => commands.executeCommand('acceptSelectedSuggestion')
 
-    async function getCompletionsSorted() {
+    const getCompletionsSorted = async function () {
         const completions: CompletionList = await commands.executeCommand('vscode.executeCompletionItemProvider', document, editor.selection.active)
         return _.sortBy(completions.items, c => c.sortText ?? c.label)
     }
@@ -123,9 +129,6 @@ describe('e2e', () => {
         expect(getCommandText()).to.equal('git config --global user.email')
     })
 
-    const strPosWithOffset = (offset: number) => initialPos.translate(0, offset)
-    const setPosSelection = (position: Position) => (editor.selection = new Selection(position, position))
-
     const testCase = (input: string) => {
         it(input, async () => {
             const [contents, positions] = stringWithPositions(input, ['(arg-compl)', '(arg)'])
@@ -136,9 +139,9 @@ describe('e2e', () => {
             }
 
             async function assertArgPosition(pos: number) {
-                const help: SignatureHelp = await commands.executeCommand('vscode.executeSignatureHelpProvider', document.uri, strPosWithOffset(pos))
+                const help: SignatureHelp = await commands.executeCommand('vscode.executeSignatureHelpProvider', document.uri, stringPos(pos))
                 expect(help.signatures[0].label.length).to.greaterThanOrEqual(1)
-                const [hover]: Hover[] = await commands.executeCommand('vscode.executeHoverProvider', document.uri, strPosWithOffset(pos))
+                const [hover]: Hover[] = await commands.executeCommand('vscode.executeHoverProvider', document.uri, stringPos(pos))
                 const hoverContents = hover.contents[0]
                 if (typeof hoverContents !== 'object') throw new Error('Expected hover markdown object')
                 expect(hoverContents.value.startsWith('\\(arg\\)')).to.equal(true)
@@ -162,7 +165,7 @@ describe('e2e', () => {
     it('Range selection', async () => {
         const [contents, position] = stringWithPositions('tsc && esbuild --target|=test arg', ['|'])
         await resetDocument(contents)
-        setPosSelection(strPosWithOffset(position['|'][0]))
+        setCursorPos(stringPos(position['|'][0]))
 
         await commands.executeCommand('editor.action.smartSelect.expand')
         expect(readableSelection()).to.equal('2,43-2,49')
@@ -181,7 +184,7 @@ describe('e2e', () => {
             const ranges: Range[] = []
             for (const [i, pos] of positions.entries()) {
                 if (i % 2 === 0) continue
-                ranges.push(new Range(strPosWithOffset(positions[i - 1]), strPosWithOffset(pos)))
+                ranges.push(new Range(stringPos(positions[i - 1]), stringPos(pos)))
             }
             const diagnosticsChangePromise = getExtDiagnostics().length
                 ? new Promise<void>(resolve => {
@@ -207,10 +210,11 @@ describe('e2e', () => {
         testDiagnostics('base64 |something|', ["base64 doesn't take argument here"])
     })
 
-    describe('Auto rename paths', () => {
+    describe('File paths', () => {
+        let renamingExpectedFile: Uri
         it('Auto rename paths', async () => {
             const renamingFile = Uri.joinPath(document.uri, '../start.mjs')
-            const renamingExpectedFile = Uri.joinPath(document.uri, '../build.mjs')
+            renamingExpectedFile = Uri.joinPath(document.uri, '../build.mjs')
             await getConfig().update('updatePathsOnFileRename', 'always', ConfigurationTarget.Global)
             await workspace.fs.writeFile(renamingFile, new TextEncoder().encode(''))
             await resetDocument('echo start.mjs && node start.mjs')
@@ -225,6 +229,38 @@ describe('e2e', () => {
                 })
             })
             expect(getCommandText()).to.equal('echo start.mjs && node build.mjs')
+        })
+
+        it('Definition provider', async () => {
+            // todo it relies on previous test
+            const [{ targetUri }]: LocationLink[] = await commands.executeCommand(
+                'vscode.executeDefinitionProvider',
+                document.uri,
+                linePos().range.end.translate(0, -1) /* pos of end of build.mjs */,
+            )
+            expect(targetUri.toString()).to.equal(renamingExpectedFile.toString())
+            // todo test that previous part doesn't have definition
+        })
+
+        it('Rename provider: build.mjs -> start.mjs', async () => {
+            // todo it relies on previous test
+            const edit: WorkspaceEdit = await commands.executeCommand(
+                'vscode.executeDocumentRenameProvider',
+                document.uri,
+                linePos().range.end.translate(0, -2) /* pos of end of build.mjs */,
+                'start.mjs',
+            )
+            await new Promise<void>(resolve => {
+                workspace.applyEdit(edit)
+                const { dispose } = workspace.onDidChangeTextDocument(() => {
+                    resolve()
+                    dispose()
+                })
+            })
+            await delay(300)
+            const filesList = (await workspace.fs.readDirectory(Uri.joinPath(document.uri, '..'))).map(([name]) => name)
+            expect(filesList).to.contain('start.mjs')
+            expect(filesList).to.not.contain('build.mjs')
         })
     })
 })

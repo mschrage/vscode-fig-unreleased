@@ -155,7 +155,7 @@ interface DocumentInfo extends ParseCommandStringResult {
     // partsToPos: PartTuple[]
     // currentCommandPos: number
     /** all command options except currently completing */
-    usedOptions: UsedOption[]
+    usedOptions: string[]
     parsedInfo: {
         completingOptionValue:
             | {
@@ -168,7 +168,7 @@ interface DocumentInfo extends ParseCommandStringResult {
     }
 }
 
-// todo review options mb add them to base
+// todo review & add them to base / or split into another arg
 type DocumentInfoForCompl = DocumentInfo & {
     /** Fallback icon */
     kind?: CompletionItemKind
@@ -176,8 +176,6 @@ type DocumentInfoForCompl = DocumentInfo & {
     specName?: string
     rangeShouldReplace?: boolean
 }
-
-type UsedOption = string
 
 // #endregion
 // #region Suggestions generators
@@ -1160,7 +1158,6 @@ const fullCommandParse = (
 
     const getSubcommandOption = (name: string) =>
         subcommand.options?.find(({ name: optName }) => (Array.isArray(optName) ? optName.includes(name) : optName === name))
-    // todo resolv
     const alreadyUsedOptions = [] as string[]
     collectedData.currentPart = allParts[currentPartIndex]
     collectedData.currentPartRange = partToRange(currentPartIndex)
@@ -1186,7 +1183,6 @@ const fullCommandParse = (
             // todo arg
             if (getSubcommandOption(partContents)?.isDangerous) setSemanticType(partIndex, 'dangerous')
             else setSemanticType(partIndex, 'option')
-            if (subcommand.parserDirectives?.optionArgSeparators) continue
             // below: lint option
             if (!subcommand.options || subcommand.options.length === 0) {
                 optionProblem = {
@@ -1194,10 +1190,27 @@ const fullCommandParse = (
                     code: 'noOptionsInput',
                 }
             } else {
+                // its a hack rather than proper support
+                const sepList = ensureArray(
+                    subcommand.parserDirectives?.optionArgSeparators ??
+                        compact(
+                            subcommand.options.map(({ requiresSeparator = false }) => {
+                                switch (requiresSeparator) {
+                                    case false:
+                                        return undefined
+                                    case true:
+                                        return '='
+                                    default:
+                                        return requiresSeparator
+                                }
+                            }),
+                        ),
+                )
                 // todo what to do with args starting with - or -- ?
                 // todo is varaibid
                 const option = getSubcommandOption(partContents)
                 if (!option) {
+                    if (sepList.some(sep => partContents.includes(sep))) continue
                     const { options } = subcommand
                     const guessedOptionName =
                         options &&
@@ -1210,10 +1223,26 @@ const fullCommandParse = (
                         code: 'unknownOption',
                     }
                     if (guessedOptionName) optionProblem.message += ` Did you mean ${guessedOptionName}?`
-                } else if (alreadyUsedOptions.includes(partContents)) {
-                    optionProblem = {
-                        message: `${partContents} option was already used [here]`,
-                        code: 'alreadyUsedOption', // probably should be changed
+                } else {
+                    if (
+                        alreadyUsedOptions.includes(partContents) &&
+                        // todo count options
+                        !option.isRepeatable
+                    ) {
+                        optionProblem = {
+                            message: `${partContents} option was already used [here]`,
+                            code: 'alreadyUsedOption', // probably should be changed
+                        }
+                    }
+                    // todo don't override
+                    // todo don't forget to rewrite when new parsing is here
+                    const { requiresSeparator } = option
+                    if (requiresSeparator) {
+                        // todo quickfix!
+                        optionProblem = {
+                            message: `${partContents} requires seperator: ${requiresSeparator === true ? '=' : requiresSeparator}`,
+                            code: 'optionWrongSeparator',
+                        }
                     }
                 }
             }
@@ -1333,15 +1362,16 @@ const fullCommandParse = (
         if (currentOptionValue) {
             const completingOption = getSubcommandOption(currentOptionValue[0])
             let { args } = completingOption ?? {}
-            // todo
+            // todo support >=2 args
             const arg = Array.isArray(args) ? args[0] : args
             if (arg) {
                 collectedData.argSignatureHelp = arg
                 updateCurrentFilePath(arg, currentPartIndex)
                 if (!arg.isOptional) {
                     // make sure only arg completions are showed
-                    // todo r
+                    // maybe there is should be a cleaner solution
                     collectedData.collectedCompletions.splice(0, collectedData.collectedCompletions.length)
+                    collectedData.collectedCompletionsPromise.splice(0, collectedData.collectedCompletionsPromise.length)
                     goingToSuggest.options = false
                 }
                 addPromiseCompletions(() => figArgToCompletions(arg!, patchedDocumentInfo))

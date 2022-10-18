@@ -1,5 +1,6 @@
 import {
     commands,
+    CompletionItemLabel,
     CompletionList,
     ConfigurationTarget,
     Hover,
@@ -51,9 +52,9 @@ describe('e2e', () => {
         editor = window.activeTextEditor!
         document = editor.document
         startContent = document.getText()
-        await delay(200)
-        await commands.executeCommand('vscode.executeCompletionItemProvider', document.uri, initialPos)
         await delay(300)
+        await commands.executeCommand('vscode.executeCompletionItemProvider', document.uri, initialPos)
+        await delay(600)
     })
 
     const stringPos = (offset: number) => initialPos.translate(0, offset)
@@ -78,8 +79,12 @@ describe('e2e', () => {
     const acceptSuggest = () => commands.executeCommand('acceptSelectedSuggestion')
 
     const getCompletionsSorted = async function () {
-        const completions: CompletionList = await commands.executeCommand('vscode.executeCompletionItemProvider', document, editor.selection.active)
+        const completions: CompletionList = await commands.executeCommand('vscode.executeCompletionItemProvider', document.uri, editor.selection.active)
         return _.sortBy(completions.items, c => c.sortText ?? c.label)
+    }
+    const isFilePathCompletions = async function () {
+        const completions = await getCompletionsSorted()
+        return completions.every(completion => (completion as any).isFileCompletion)
     }
 
     // to ensure that it just works
@@ -122,11 +127,27 @@ describe('e2e', () => {
         expect(getCommandText()).to.equal('esbuild --target=chrome,chrome')
     })
 
-    it('subcommand arg git generator', async () => {
-        await resetDocument('git config --global user.')
+    it('yarn arg generator', async () => {
+        await resetDocument('yarn ')
         await triggerSuggest(true)
         await acceptSuggest()
-        expect(getCommandText()).to.equal('git config --global user.email')
+        expect(getCommandText()).to.equal('yarn extension_testing')
+    })
+
+    it('only option arg suggestions', async () => {
+        await resetDocument('yarn --emoji ')
+        const completions = await getCompletionsSorted()
+        expect(completions.map(({ label }) => (label as CompletionItemLabel).label)).to.equal(['false', 'true'])
+    })
+
+    // todo
+    it.skip('two options args', async () => {
+        await resetDocument('bun create ')
+        await triggerSuggest(true)
+        await acceptSuggest()
+        expect(getCommandText()).to.equal('bun create react')
+        await commands.executeCommand('type', { text: ' ' })
+        expect(isFilePathCompletions()).to.equal(true)
     })
 
     const testCase = (input: string) => {
@@ -198,17 +219,31 @@ describe('e2e', () => {
             const ourDiagnostics = getExtDiagnostics()
             expect(ourDiagnostics.length).to.equal(expectedMessages.length)
             for (const [i, { range, message }] of ourDiagnostics.entries()) {
+                if (!ranges[i]) throw new Error(`Range is not defined for ${i + 1}st diagnostic`)
                 expect(range.isEqual(ranges[i])).to.equal(true)
+                if (expectedMessages[i] === '*') continue
                 expect(expectedMessages[i]).to.equal(message)
             }
         })
     }
 
-    describe('linting', () => {
+    describe.only('linting', () => {
         // testDiagnostics('|esint| --cache', ['Unknown command esint'])
         testDiagnostics('pnpm build |--prod|', ["Command doesn't take options here"])
-        testDiagnostics('|jest| |--bali|', ['jest is not installed', 'Unknown option --bali Did you mean --bail?'])
         testDiagnostics('base64 |something|', ["base64 doesn't take argument here"])
+
+        // #region option validation
+        testDiagnostics('|jest| |--bali|', ['jest is not installed', 'Unknown option --bali Did you mean --bail?'])
+        // todo disable pkg linting at this point
+        testDiagnostics('|esbuild| |-af|', ['*', 'Unknown option -af'])
+        testDiagnostics('|esbuild| --target=e', ['*'])
+        testDiagnostics('|esbuild| |--target| e', ['*', '--target requires seperator: ='])
+        testDiagnostics('grep --exclude . |--exclude|', ['--exclude option was already used [here]'])
+        // but isRepeatable is not reported
+        testDiagnostics('grep --exclude-dir . |--exclude-dir| ..', [])
+        // todo support linting here
+        testDiagnostics('turbo prune --scope=', [])
+        // #endregion
     })
 
     describe('File paths', () => {

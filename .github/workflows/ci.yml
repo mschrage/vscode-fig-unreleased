@@ -25,7 +25,7 @@ jobs:
           version: latest
           run_install: |
             args: [--frozen-lockfile, --strict-peer-dependencies]
-      - run: pnpm lint
+      # - run: pnpm lint
       - run: pnpm unit-test
       - run: pnpm build
       - uses: GabrielBB/xvfb-action@v1.6

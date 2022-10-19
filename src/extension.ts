@@ -1285,7 +1285,9 @@ const fullCommandParse = (
                 // subcommand.requiresSubcommand
                 const arg = ensureArray(subcommand.args)[0]
                 // note: doesn't support deprecated (isModule)
-                if (!arg.isVariadic && (arg.isCommand || arg.loadSpec)) {
+                if (!arg.isVariadic && (arg.isCommand || arg.loadSpec || arg.isScript)) {
+                    // todo support it
+                    if (arg.isScript) return
                     // switch spec
                     let newSpec: Fig.Spec | undefined
                     if (arg.isCommand) newSpec = getCompletingSpec(partContents)

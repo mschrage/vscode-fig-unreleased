@@ -130,7 +130,7 @@ describe('e2e', () => {
         expect(getCommandText()).to.equal('esbuild --target=chrome,chrome')
     })
 
-    it('yarn arg generator', async () => {
+    it('yarn arg script generator', async () => {
         await resetDocument('yarn ')
         await triggerSuggest(true)
         await acceptSuggest()
@@ -233,6 +233,7 @@ describe('e2e', () => {
     describe('linting', () => {
         // testDiagnostics('|esint| --cache', ['Unknown command esint'])
         testDiagnostics('pnpm build |--prod|', ["Command doesn't take options here"])
+        testDiagnostics('node build.mjs --watch', [])
         testDiagnostics('base64 |something|', ["base64 doesn't take argument here"])
 
         // #region option validation

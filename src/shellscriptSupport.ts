@@ -1,7 +1,10 @@
 import { DocumentSelector, Range } from 'vscode'
 import { API, RegisterLanguageSupportOptions } from './extension-api'
 
-const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript']
+const SUPPORTED_SHELL_SELECTOR: DocumentSelector = ['bat', 'shellscript'].map(lang => ({
+    language: lang,
+    scheme: '*',
+}))
 
 const shellBannedLineRegex = /^\s*(#|::|if|else|fi|return|function|"|'|[\w\d]+(=|\())/i
 

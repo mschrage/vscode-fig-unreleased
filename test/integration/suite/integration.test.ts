@@ -31,6 +31,8 @@ describe('e2e', () => {
     let startContent!: string
 
     before(async function () {
+        // allow script executions
+        await workspace.getConfiguration().update('security.workspace.trust.enabled', false, ConfigurationTarget.Global)
         this.timeout(6000)
         const testingPackageJsonUri = Uri.file(join(__dirname, '../fixtures/package.json'))
         await workspace.fs.writeFile(

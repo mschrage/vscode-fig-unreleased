@@ -220,6 +220,8 @@ describe('e2e', () => {
                 : Promise.resolve(null)
             await Promise.all([resetDocument(contents), diagnosticsChangePromise])
             const ourDiagnostics = getExtDiagnostics()
+            // just to ensure it doesn't crash, don't inspect the diagnostics
+            if (expectedMessages[0] === '**') return
             expect(ourDiagnostics.length).to.equal(expectedMessages.length)
             for (const [i, { range, message }] of ourDiagnostics.entries()) {
                 if (!ranges[i]) throw new Error(`Range is not defined for ${i + 1}st diagnostic`)
@@ -238,6 +240,7 @@ describe('e2e', () => {
 
         // #region option validation
         testDiagnostics('|jest| |--bali|', ['jest is not installed', 'Unknown option --bali Did you mean --bail?'])
+        testDiagnostics('npm --no-git-tag-version version 1.0.${{ github.run_number }}', ['**'])
         // todo disable pkg linting at this point
         testDiagnostics('|esbuild| |-af|', ['*', 'Unknown option -af'])
         testDiagnostics('|esbuild| --target=e', ['*'])

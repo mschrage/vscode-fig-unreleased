@@ -1,3 +1,4 @@
+//@ts-check
 // patched version of shell-quote package to include indexes (offsets) of matches
 
 // '<(' is process substitution operator and
@@ -13,11 +14,11 @@ for (var i = 0; i < 4; i++) {
     TOKEN += (Math.pow(16, 8) * Math.random()).toString(16)
 }
 
-exports.parse = function (s, env, opts) {
-    return parse(s, env, opts)
+exports.parse = function (s) {
+    return parse(s)
 }
 
-function parse(s, env, opts) {
+function parse(s) {
     var chunker = new RegExp(
         [
             '(' + CONTROL + ')', // control chars
@@ -29,8 +30,6 @@ function parse(s, env, opts) {
     var commented = false
 
     if (!match) return []
-    if (!env) env = {}
-    if (!opts) opts = {}
     return (
         match
             .map(function (match, j) {
@@ -56,21 +55,20 @@ function parse(s, env, opts) {
                 var SQ = "'"
                 var DQ = '"'
                 var DS = '$'
-                var BS = opts.escape || '\\'
+                var BS = '\\'
                 var quote = false
                 var esc = false
                 var out = ''
-                // var isGlob = false
 
                 for (var i = 0, len = s.length; i < len; i++) {
                     var c = s.charAt(i)
-                    // isGlob = isGlob || (!quote && (c === '*' || c === '?'))
                     if (esc) {
                         out += c
                         esc = false
                     } else if (quote) {
                         if (c === quote) {
                             quote = false
+                            // @ts-ignore
                         } else if (quote == SQ) {
                             out += c
                         } else {
@@ -83,8 +81,6 @@ function parse(s, env, opts) {
                                 } else {
                                     out += BS + c
                                 }
-                            } else if (c === DS) {
-                                out += parseEnvVar()
                             } else {
                                 out += c
                             }
@@ -102,55 +98,10 @@ function parse(s, env, opts) {
                         }
                     } else if (c === BS) {
                         esc = true
-                    } else if (c === DS) {
-                        out += parseEnvVar()
                     } else out += c
                 }
 
-                // if (isGlob) return { op: 'glob', index: match.index, pattern: out }
-
                 return [out, match.index]
-
-                function parseEnvVar() {
-                    i += 1
-                    var varend, varname
-                    //debugger
-                    if (s.charAt(i) === '{') {
-                        i += 1
-                        if (s.charAt(i) === '}') {
-                            throw new Error('Bad substitution: ' + s.substr(i - 2, 3))
-                        }
-                        varend = s.indexOf('}', i)
-                        if (varend < 0) {
-                            throw new Error('Bad substitution: ' + s.substr(i))
-                        }
-                        varname = s.substr(i, varend - i)
-                        i = varend
-                    } else if (/[*@#?$!_\-]/.test(s.charAt(i))) {
-                        varname = s.charAt(i)
-                        i += 1
-                    } else {
-                        varend = s.substr(i).match(/[^\w\d_]/)
-                        if (!varend) {
-                            varname = s.substr(i)
-                            i = s.length
-                        } else {
-                            varname = s.substr(i, varend.index)
-                            i += varend.index - 1
-                        }
-                    }
-                    return getVar(null, '', varname)
-                }
             })
     )
-
-    function getVar(_, pre, key) {
-        var r = typeof env === 'function' ? env(key) : env[key]
-        if (r === undefined && key != '') r = ''
-        else if (r === undefined) r = '$'
-
-        if (typeof r === 'object') {
-            return pre + TOKEN + JSON.stringify(r) + TOKEN
-        } else return pre + r
-    }
 }

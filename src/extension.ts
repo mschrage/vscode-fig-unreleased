@@ -7,6 +7,7 @@ import {
     CompletionItemLabel,
     CompletionItemTag,
     CompletionTriggerKind,
+    Diagnostic,
     DiagnosticSeverity,
     Disposable,
     DocumentSelector,
@@ -1942,38 +1943,35 @@ const registerLinter = () => {
     /** currently included documents into linting, all visible tabs for now */
     let supportedDocuments: TextDocument[] = []
     const doLinting = (document: TextDocument) => {
-        if (!getExtensionSetting('validate')) {
-            diagnosticCollection.set(document.uri, [])
-            return
-        }
-        const { getAllSingleLineCommandLocations } = getBestLanguageProvider(document) ?? {}
-        if (!getAllSingleLineCommandLocations) return
-        const inputRanges = getAllSingleLineCommandLocations(document)
-        if (!inputRanges) return
+        let newDiagnostics: readonly Diagnostic[] = []
+        try {
+            if (!getExtensionSetting('validate')) return
+            const { getAllSingleLineCommandLocations } = getBestLanguageProvider(document) ?? {}
+            if (!getAllSingleLineCommandLocations) return
+            const inputRanges = getAllSingleLineCommandLocations(document)
+            if (!inputRanges) return
 
-        const lintTypeToSettingMap: Record<LintProblemType, string> = {
-            commandName: 'commandName',
-            noArgInput: 'noArgInput',
-            option: 'optionName',
-            commandNotAllowedContext: 'commandNotAllowedContext',
-        }
-        const lintConfiguration: Record<string, 'ignore' | '' /*don't care of severities*/> =
-            workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint') ?? {}
+            const lintTypeToSettingMap: Record<LintProblemType, string> = {
+                commandName: 'commandName',
+                noArgInput: 'noArgInput',
+                option: 'optionName',
+                commandNotAllowedContext: 'commandNotAllowedContext',
+            }
+            const lintConfiguration: Record<string, 'ignore' | '' /*don't care of severities*/> =
+                workspace.getConfiguration(CONTRIBUTION_PREFIX, document).get('lint') ?? {}
 
-        const allLintProblems: ParseCollectedData['lintProblems'] = []
-        const lintRanges = getAllCommandLocations(document, inputRanges)
-        for (const range of lintRanges) {
-            if (range.start.isEqual(range.end)) continue
-            const collectedData: ParseCollectedData = {}
-            fullCommandParse(document, range, range.start, collectedData, 'lint', {
-                includeSpecContextLint: lintConfiguration.commandNotAllowedContext !== 'ignore',
-            })
-            const { lintProblems = [] } = collectedData
-            allLintProblems.push(...lintProblems)
-        }
-        diagnosticCollection.set(
-            document.uri,
-            compact(
+            const allLintProblems: ParseCollectedData['lintProblems'] = []
+            const lintRanges = getAllCommandLocations(document, inputRanges)
+            for (const range of lintRanges) {
+                if (range.start.isEqual(range.end)) continue
+                const collectedData: ParseCollectedData = {}
+                fullCommandParse(document, range, range.start, collectedData, 'lint', {
+                    includeSpecContextLint: lintConfiguration.commandNotAllowedContext !== 'ignore',
+                })
+                const { lintProblems = [] } = collectedData
+                allLintProblems.push(...lintProblems)
+            }
+            newDiagnostics = compact(
                 allLintProblems.map(({ message, range, type, code }) => {
                     const controlledSettingName = lintTypeToSettingMap[type]
                     const controlledSettingValue = controlledSettingName && lintConfiguration[controlledSettingName]
@@ -1992,8 +1990,10 @@ const registerLinter = () => {
                         code: code ?? type,
                     }
                 }),
-            ),
-        )
+            )
+        } finally {
+            diagnosticCollection.set(document.uri, newDiagnostics)
+        }
     }
     const lintDocuments = (documents: TextDocument[]) => {
         for (const document of documents) {
